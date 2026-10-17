@@ -292,8 +292,9 @@ Các cơ chế nổi lên (emergent):
 6. Về lâu dài: *Nơi trú ẩn* → **làng hang ổ**, *Ngôn ngữ*, *Tôn giáo* (thờ "Thần Mặt Trăng"), có thể tiến hoá
    thành **loài sói mới** và lập **Vương quốc Sói**.
 
-Kết quả chạy thật (seed 3): bộ tộc sói đầu tiên hình thành ở **năm 3**, làng hang ổ ở năm 17, loài mới
-*"Sói Krugthai"* ở năm 19, lãnh địa thờ thần ở năm 21.
+Kết quả chạy thật (`worldbox_sim --scenario wolves --seed 3`): bộ tộc sói đầu tiên hình thành ở **năm 5**,
+làng hang ổ ở năm 13, bầy đầu tiên thờ thần ("Thần Cái Chết") ở năm 20, và từ năm 25 bắt đầu tách ra
+các loài sói mới (*"Sói Raimrem"*, *"Sói Vêgtô"*…).
 
 ### 8.2 Người nguyên thuỷ → Quốc gia (`--scenario humans`)
 1. 14 người trắng tay cạnh rừng và đồi đá.
@@ -302,6 +303,10 @@ Kết quả chạy thật (seed 3): bộ tộc sói đầu tiên hình thành �
 4. Ăn cây trái lâu → **Trồng trọt** → ruộng, kho lương → **Thị trấn**.
 5. Thấy quặng → **Khai khoáng**; lửa + quặng → **Luyện kim** → vũ khí kim loại.
 6. Ngôn ngữ + trồng trọt → **Chữ viết**; định cư lâu → **Luật pháp** → toà thị chính → **QUỐC GIA**.
+
+Kết quả chạy thật (`worldbox_sim --scenario humans --seed 8`): làng đầu tiên ở năm 18, thị trấn ở năm 39,
+**quốc gia đầu tiên ở năm 42** (*"Thánh quốc Rainai"* — thể chế Thần quyền, quốc đạo thờ thần Mưa Giông).
+Mỗi seed cho một lịch sử khác nhau (seed 5: làng ở năm 15, thị trấn ở năm 48).
 
 ---
 
