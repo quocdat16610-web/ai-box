@@ -1,0 +1,48 @@
+// =============================================================================
+// Module ứng dụng: không có mã Java/Kotlin — dùng NativeActivity của Android,
+// toàn bộ game là C++ (raylib + lõi mô phỏng) build bằng NDK qua CMake gốc.
+// =============================================================================
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.worldboxai.game'
+    compileSdk 34
+    // Cho phép chọn NDK: ./gradlew assembleRelease -PndkVersion=27.2.12479018
+    if (project.hasProperty('ndkVersion')) {
+        ndkVersion project.property('ndkVersion')
+    }
+
+    defaultConfig {
+        applicationId 'com.worldboxai.game'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '0.1.0'
+        externalNativeBuild {
+            cmake {
+                arguments '-DWB_BUILD_HEADLESS=OFF', '-DANDROID_STL=c++_static', '-DCMAKE_BUILD_TYPE=Release'
+            }
+        }
+        ndk {
+            // arm64 cho hầu hết điện thoại hiện đại, armv7 cho máy cũ, x86_64 cho trình giả lập
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('../../CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Ký bằng khoá debug để APK cài được ngay; thay bằng keystore riêng khi phát hành Play Store
+            signingConfig signingConfigs.debug
+        }
+    }
+}

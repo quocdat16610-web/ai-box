@@ -1,0 +1,12 @@
+build*/
+out/
+*.png
+!docs/*.png
+android/.gradle/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+android/build/
+.idea/
+.vscode/
+gmon.out

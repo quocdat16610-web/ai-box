@@ -1,0 +1,17 @@
+// Dự án Android cho WorldBox AI — đóng gói thư viện C++ (libmain.so) vào APK.
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "WorldBoxAI"
+include ':app'
