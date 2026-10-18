@@ -10,6 +10,7 @@
 #include <cstdarg>
 #include <algorithm>
 #include <iterator>
+#include <cstdlib>
 
 namespace wb {
 
@@ -266,22 +267,63 @@ std::vector<std::string> wrapText(const std::string& text, float fs, float maxW)
 
 struct Writer {
     float x, y, w, fs;
+    float limit = 1e9f;   // không vẽ quá đáy bảng
     void wrapped(const std::string& s, Color c = kText, float maxY = 1e9f) {
+        maxY = std::min(maxY, limit);
         for (const std::string& l : wrapText(s, fs * 0.9f, w)) {
             if (y > maxY) break;
             ui::drawText(l, x, y, fs * 0.9f, c);
             y += fs * 1.15f;
         }
     }
-    void line(const std::string& s, Color c = kText) { ui::drawText(s, x, y, fs, c); y += fs * 1.25f; }
+    void line(const std::string& s, Color c = kText) { if (y <= limit) ui::drawText(s, x, y, fs, c); y += fs * 1.25f; }
     void title(const std::string& s, Color c = kAccent) { ui::drawText(s, x, y, fs * 1.2f, c); y += fs * 1.5f; }
     void gap() { y += fs * 0.4f; }
     void meter(const std::string& label, float v, Color c) {
+        if (y > limit) { y += fs * 1.15f; return; }
         ui::drawText(label, x, y, fs * 0.9f, kMuted);
         bar(x + w * 0.42f, y + fs * 0.25f, w * 0.55f, fs * 0.55f, v, c);
         y += fs * 1.15f;
     }
 };
+
+// Vẽ mạng neuron của bộ não: cột đầu vào (cảm nhận & nhu cầu) → lớp ẩn → các mục tiêu.
+// Màu neuron = mức kích hoạt (xanh âm, cam dương); đường nối = trọng số mạnh nhất.
+void drawNeuralNet(const NeuralNet& nn, float x, float y, float w, float h, float fs) {
+    auto col = [](float a) {
+        a = std::clamp(a, -1.0f, 1.0f);
+        return a >= 0 ? Color{255, static_cast<unsigned char>(160 + 60 * a), 60, static_cast<unsigned char>(90 + 165 * a)}
+                      : Color{80, 160, 255, static_cast<unsigned char>(90 - 165 * a)};
+    };
+    float xi = x + 4, xh = x + w * 0.38f, xo = x + w * 0.6f;
+    auto yi = [&](int i) { return y + 3 + i * (h - 6) / (kNnIn - 1); };
+    auto yh = [&](int j) { return y + 3 + j * (h - 6) / (kNnHid - 1); };
+    // Chỉ vẽ 6 mục tiêu đang được bộ não "thích" nhất
+    std::array<int, kNnOut> idx;
+    for (int k = 0; k < kNnOut; ++k) idx[k] = k;
+    std::partial_sort(idx.begin(), idx.begin() + 6, idx.end(), [&](int a, int b) { return nn.out[a] > nn.out[b]; });
+    auto yo = [&](int r) { return y + 3 + r * (h - 6) / 5; };
+    for (int j = 0; j < kNnHid; ++j)
+        for (int i = 0; i < kNnIn; ++i) {
+            float wv = nn.w1[j * (kNnIn + 1) + i];
+            if (std::fabs(wv) < 0.45f) continue;
+            Color c = wv > 0 ? Color{255, 190, 90, 40} : Color{90, 170, 255, 40};
+            DrawLineV({xi, yi(i)}, {xh, yh(j)}, c);
+        }
+    for (int r = 0; r < 6; ++r)
+        for (int j = 0; j < kNnHid; ++j) {
+            float wv = nn.w2[idx[r] * (kNnHid + 1) + j];
+            if (std::fabs(wv) < 0.3f) continue;
+            Color c = wv > 0 ? Color{255, 190, 90, 70} : Color{90, 170, 255, 70};
+            DrawLineV({xh, yh(j)}, {xo, yo(r)}, c);
+        }
+    for (int i = 0; i < kNnIn; ++i) DrawCircleV({xi, yi(i)}, 2.2f, col(nn.in[i] * 2 - 1));
+    for (int j = 0; j < kNnHid; ++j) DrawCircleV({xh, yh(j)}, 2.6f, col(nn.hid[j]));
+    for (int r = 0; r < 6; ++r) {
+        DrawCircleV({xo, yo(r)}, 3.0f, col(nn.out[idx[r]]));
+        ui::drawText(fmt("%s %+.2f", goalName(static_cast<GoalId>(idx[r])), nn.out[idx[r]]), xo + 6, yo(r) - fs * 0.45f, fs * 0.75f, kMuted);
+    }
+}
 
 void drawCreaturePanel(App& app, Rectangle r) {
     Simulation& sim = *app.sim;
@@ -294,19 +336,49 @@ void drawCreaturePanel(App& app, Rectangle r) {
     const Genome& g = sim.reg.get<GenomeC>(e).genome;
     const SpeciesDef& sd = sim.species[b.species];
     Writer w{r.x + 10 * app.uiScale, r.y + 8 * app.uiScale, r.width - 20 * app.uiScale, 13 * app.uiScale};
+    w.limit = r.y + r.height - 34 * app.uiScale - 26 * app.uiScale;
     w.title(so.name + " — " + sd.name + (b.female ? " (cái)" : " (đực)"));
     const Group* grp = so.group >= 0 ? &sim.groups[so.group] : nullptr;
     w.line(fmt("Tuổi %.1f · %s · Thế hệ %d", sim.yearsOf(b.ageTicks), roleName(so.role), g.generation), kMuted);
     if (grp) w.line("Thuộc: " + grp->displayName() + " (" + stageName(grp->stage, grp->animal) + ")", groupColor(sim, so.group));
     w.gap();
     w.line(std::string("Suy nghĩ: \"") + m.thought + "\"", Color{255, 230, 150, 255});
-    w.line(fmt("Trí tuệ %.2f — %s · Tính cách: %s", m.intellect, sapienceName(m.sapience()), m.pers.archetype()));
+    const Drives& D = m.drives;
+    w.line(fmt("IQ %d · %s · Tính cách: %s", m.iq(), sapienceName(m.sapience()), m.pers.archetype()), SKYBLUE);
+    w.line(fmt("Giới tính: %s · Cảm xúc: %s · Hạnh phúc %.0f%%", b.female ? "cái" : "đực", emotionName(m.emotion), D.happiness * 100));
+    if (D.ambition != Ambition::None)
+        w.line(fmt("Tham vọng: %s — %.0f%%%s", ambitionName(D.ambition), D.progress * 100,
+                   D.ambitionLevel > 0 ? fmt(" (đã đạt %d lần)", D.ambitionLevel).c_str() : ""), Color{255, 200, 120, 255});
     w.meter("Máu", b.hp / b.maxHp, Color{220, 70, 70, 255});
-    w.meter("Đói", b.hunger, Color{230, 160, 60, 255});
-    w.meter("Mệt", b.fatigue, Color{150, 150, 230, 255});
-    w.meter("Lạnh", b.cold, Color{120, 200, 255, 255});
-    w.meter("Trí tuệ", m.intellect, SKYBLUE);
-    w.gap();
+    // Nhu cầu: 2 cột thanh nhỏ (đầy = càng thiếu thốn)
+    {
+        float cw = w.w / 2;
+        for (int i = 0; i < kNeedCount; ++i) {
+            float nx = w.x + (i % 2) * cw, ny = w.y + (i / 2) * w.fs * 1.05f;
+            ui::drawText(needName(static_cast<Need>(i)), nx, ny, w.fs * 0.78f, kMuted);
+            bar(nx + cw * 0.5f, ny + w.fs * 0.2f, cw * 0.45f, w.fs * 0.5f, D.need[i], Color{230, 130, 90, 255});
+        }
+        w.y += 4 * w.fs * 1.05f + w.fs * 0.2f;
+    }
+    // Lời nói gần nhất + trình thông dịch + nghe lại
+    if (!m.speech.text.empty() && sim.tick - m.speech.tick < kTicksPerYear) {
+        float bw = 52 * app.uiScale;
+        if (button({w.x + w.w - bw, w.y - 2, bw, w.fs * 1.3f}, "Nghe") && app.voice.ready())
+            app.voice.speak(m.speech.text, voiceOf(sim, e, m.speech.emotion));
+        float keepW = w.w;
+        w.w -= bw + 4;
+        w.wrapped(std::string("Nói: \"") + m.speech.text + "\"", Color{255, 230, 140, 255});
+        w.w = keepW;
+        if (app.opt.translate) w.wrapped("Dịch: " + m.speech.translation, Color{170, 230, 190, 255});
+    }
+    // Mạng neuron
+    {
+        float nh = 64 * app.uiScale;
+        ui::drawText(fmt("Mạng neuron %d→%d→%d · đã học %u lần", kNnIn, kNnHid, kNnOut, m.nn.updates), w.x, w.y, w.fs * 0.8f, kMuted);
+        w.y += w.fs;
+        drawNeuralNet(m.nn, w.x, w.y, w.w, nh, w.fs);
+        w.y += nh + w.fs * 0.3f;
+    }
     // Kế hoạch GOAP hiện tại
     w.line(std::string("Mục tiêu: ") + goalName(m.goal), kAccent);
     std::string plan;
@@ -536,6 +608,43 @@ void drawChemistryPanel(App& app, Rectangle r) {
 // ---------------------------------------------------------------------------
 // Thanh trên + thanh công cụ
 // ---------------------------------------------------------------------------
+// ---- Nghe sinh vật nói: câu mới của sinh vật đang chọn luôn được đọc; khi phóng to thì nghe
+// thêm "tiếng xì xào" của những sinh vật trên màn hình (tối đa ~1 câu / 0.9 giây).
+void updateVoices(App& app) {
+    Simulation& sim = *app.sim;
+    app.voice.update();
+    if (!app.hearVoices || !app.voice.ready() || app.speedIdx == 0) return;
+    Entity sel = app.opt.selected;
+    if (sim.reg.valid(sel) && sim.reg.has<Mind>(sel)) {
+        const Utterance& u = sim.reg.get<Mind>(sel).speech;
+        if (sel != app.lastHeardEntity) { app.lastHeardEntity = sel; app.lastHeardTick = u.tick; }
+        else if (u.tick > app.lastHeardTick && sim.tick - u.tick < 60) {
+            app.lastHeardTick = u.tick;
+            app.voice.speak(u.text, voiceOf(sim, sel, u.emotion));
+            return;
+        }
+    }
+    if (app.cam.zoom < 2.5f || GetTime() - app.lastAmbientVoice < 0.9) return;
+    Vector2 c = GetScreenToWorld2D({GetScreenWidth() * 0.5f, GetScreenHeight() * 0.5f}, app.cam);
+    Vector2 tl = GetScreenToWorld2D({0, 0}, app.cam);
+    float R = (c.x - tl.x) / kTileWorld;
+    Entity best = NullEntity;
+    long bestTick = app.lastAmbientTick;
+    sim.grid.query({c.x / kTileWorld, c.y / kTileWorld}, R, [&](Entity e, Vec2) {
+        const Mind* m = sim.reg.pool<Mind>().tryGet(e);
+        if (m && m->speech.tick > bestTick && sim.tick - m->speech.tick < 30 && e != sel) { bestTick = m->speech.tick; best = e; }
+    });
+    if (best == NullEntity) return;
+    const Utterance& u = sim.reg.get<Mind>(best).speech;
+    VoiceProfile vp = voiceOf(sim, best, u.emotion);
+    const Transform& tr = sim.reg.get<Transform>(best);
+    float d = std::hypot(tr.pos.x - c.x / kTileWorld, tr.pos.y - c.y / kTileWorld) / std::max(1.0f, R);
+    vp.volume *= std::clamp(0.7f - d * 0.5f, 0.15f, 0.7f);   // càng xa tâm màn hình càng nhỏ
+    app.voice.speak(u.text, vp);
+    app.lastAmbientVoice = GetTime();
+    app.lastAmbientTick = u.tick;
+}
+
 void drawHud(App& app) {
     Simulation& sim = *app.sim;
     float s = app.uiScale;
@@ -548,11 +657,12 @@ void drawHud(App& app) {
     std::string info = sim.dateString() + fmt(" · Dân %d · Nhóm %d · Quốc gia %d · Loài %d", st.population, st.groups, st.nations, st.species);
     float fs = 14 * s;
     float speedW = 44 * s;
-    float rightBlock = speedW * 5 + 4 * 90 * s;
-    if (portrait) info = sim.dateString() + fmt(" · Dân %d · QG %d", st.population, st.nations);
-    ui::drawText(info, 10 * s, (th - fs) / 2, fs, kText);
+    float rightBlock = speedW * 5 + 6 * 90 * s;
     float x = W - rightBlock;
     if (portrait) x = W - speedW * 5 - 8 * s;
+    if (portrait || ui::measureText(info, fs) > x - 16 * s) info = sim.dateString() + fmt(" · Dân %d · QG %d", st.population, st.nations);
+    if (ui::measureText(info, fs) > x - 16 * s) info = fmt("Dân %d · QG %d", st.population, st.nations);
+    ui::drawText(info, 10 * s, (th - fs) / 2, fs, kText);
     for (int i = 0; i < 5; ++i) {
         if (button({x + i * speedW, 4 * s, speedW - 4 * s, th - 8 * s}, kSpeedLabels[i], app.speedIdx == i)) app.speedIdx = i;
     }
@@ -563,7 +673,9 @@ void drawHud(App& app) {
         if (button({bx + 90 * s, 4 * s, 86 * s, th - 8 * s}, "Suy nghĩ", app.opt.debugThoughts)) app.opt.debugThoughts = !app.opt.debugThoughts;
         if (button({bx + 180 * s, 4 * s, 86 * s, th - 8 * s}, std::string("Lớp: ") + layerName(app.opt.layer), app.opt.layer != Layer::Normal))
             app.opt.layer = static_cast<Layer>((static_cast<int>(app.opt.layer) + 1) % static_cast<int>(Layer::Count));
-        if (button({bx + 270 * s, 4 * s, 80 * s, th - 8 * s}, "Menu")) app.inMenu = true;
+        if (button({bx + 270 * s, 4 * s, 86 * s, th - 8 * s}, app.hearVoices ? "Giọng: Bật" : "Giọng: Tắt", app.hearVoices)) app.hearVoices = !app.hearVoices;
+        if (button({bx + 360 * s, 4 * s, 86 * s, th - 8 * s}, "Thông dịch", app.opt.translate)) app.opt.translate = !app.opt.translate;
+        if (button({bx + 450 * s, 4 * s, 80 * s, th - 8 * s}, "Menu")) app.inMenu = true;
     }
 
     // ---- Thanh công cụ dưới ----
@@ -607,6 +719,10 @@ void drawHud(App& app) {
             tx += toolW + 4 * s;
             if (button({tx, rowY2, toolW, bh}, std::string("Lớp: ") + layerName(app.opt.layer), app.opt.layer != Layer::Normal))
                 app.opt.layer = static_cast<Layer>((static_cast<int>(app.opt.layer) + 1) % static_cast<int>(Layer::Count));
+            tx += toolW + 4 * s;
+            if (button({tx, rowY2, toolW, bh}, app.hearVoices ? "Giọng: Bật" : "Giọng: Tắt", app.hearVoices)) app.hearVoices = !app.hearVoices;
+            tx += toolW + 4 * s;
+            if (button({tx, rowY2, toolW, bh}, "Thông dịch", app.opt.translate)) app.opt.translate = !app.opt.translate;
             tx += toolW + 4 * s;
         } else {
             if (button({tx, rowY2, toolW, bh}, "Hoá học", app.panel == SidePanel::Chemistry))
@@ -695,11 +811,13 @@ void appInit(App& app) {
     app.worldSize = 128;
 #endif
     ui::initText(16 * app.uiScale);
+    if (!std::getenv("WB_NOAUDIO")) app.voice.init();
 }
 
 void appStartWorld(App& app) { startWorld(app); }
 
 void appShutdown(App& app) {
+    app.voice.shutdown();
     app.renderer.shutdown();
     ui::shutdownText();
 }
@@ -740,6 +858,7 @@ void appFrame(App& app) {
     Vector2 tl = GetScreenToWorld2D({0, 0}, app.cam);
     Vector2 br = GetScreenToWorld2D({static_cast<float>(GetScreenWidth()), static_cast<float>(GetScreenHeight())}, app.cam);
     sim.setFocusRect(tl.x / kTileWorld, tl.y / kTileWorld, br.x / kTileWorld, br.y / kTileWorld);
+    updateVoices(app);
     // Texture địa hình: cập nhật thưa (mỗi 4 khung) để tiết kiệm băng thông GPU
     if (app.frame % 4 == 0 || sim.world.fullRedraw) app.renderer.sync(sim);
 

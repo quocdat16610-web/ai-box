@@ -13,11 +13,19 @@ namespace wb {
 
 const char* roleName(Role r) {
     static const char* n[] = {"Không", "Thủ lĩnh", "Trưởng lão", "Thợ săn", "Hái lượm", "Thợ xây", "Nông dân",
-                              "Binh lính", "Thợ thủ công", "Tư tế", "Trẻ con"};
+                              "Binh lính", "Thợ thủ công", "Tư tế", "Trẻ con", "Học giả", "Thợ mỏ"};
     return n[static_cast<int>(r)];
 }
 
 Simulation::Simulation(const SimConfig& c) { reset(c); }
+
+const Language& Simulation::languageOf(Entity e) {
+    if (Social* so = reg.tryGet<Social>(e))
+        if (Group* g = group(so->group)) return g->language;
+    int sp = reg.has<Body>(e) ? reg.get<Body>(e).species : 0;
+    if (speciesLang_.empty()) speciesLang_.push_back(Language::generate(rng, 0.5f));
+    return speciesLang_[std::min<int>(sp, static_cast<int>(speciesLang_.size()) - 1)];
+}
 Simulation::~Simulation() = default;
 
 void Simulation::reset(const SimConfig& c) {
@@ -33,6 +41,7 @@ void Simulation::reset(const SimConfig& c) {
     killEvents.clear();
     chronicle.clear();
     worldFirsts.reset();
+    conceptFirsts.reset();
     designs.clear();
     processes.clear();
     physics.clear();

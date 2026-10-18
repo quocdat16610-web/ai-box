@@ -64,6 +64,8 @@ if (WB_BUILD_HEADLESS AND NOT ANDROID)
     add_test(NAME sandbox_runs COMMAND worldbox_sim --scenario sandbox --years 10 --seed 1 --quiet)
     # Công nghệ mở: phải có phát minh thật; vật lý/hoá học: phải xảy ra nhiều loại phản ứng khác nhau
     add_test(NAME humans_invent_and_react COMMAND worldbox_sim --scenario humans --years 30 --seed 8 --quiet --expect-designs 10 --expect-reactions 5)
+    # Con người tự xây nơi cư trú; khoa học (vật lý, hoá học, sinh học, địa chất) được hiểu ra từ quan sát & nghiên cứu
+    add_test(NAME humans_shelter_and_science COMMAND worldbox_sim --scenario humans --years 35 --seed 5 --quiet --expect-shelters 15 --expect-concepts 15)
 endif()
 
 # ---------------- Game (raylib) ----------------
@@ -86,6 +88,8 @@ if (WB_BUILD_GAME)
         src/app/Renderer.cpp
         src/app/Ui.cpp
         src/app/Text.cpp
+        src/app/Sprites.cpp
+        src/app/Voice.cpp
     )
     if (ANDROID)
         # NativeActivity nạp "libmain.so" (khai báo trong AndroidManifest.xml)

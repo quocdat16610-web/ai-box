@@ -129,6 +129,7 @@ struct Group {
     std::vector<int> designs, processes;
     std::array<int, kPurposeCount> bestDesign{};
     float techLevel = 0;          // trình độ công nghệ liên tục, KHÔNG có trần
+    std::array<float, kScienceCount> science{};   // trình độ từng ngành: vật lý, hoá học, sinh học, địa chất
     std::string era = "Thời đại Tay không";
     MatId eraMat = kNoMat;
     // Bếp lửa / lò luyện của nhóm (nguồn nhiệt thật trong MatterGrid)
@@ -141,6 +142,8 @@ struct Group {
     // Công trình (đếm lại định kỳ)
     int dwellings = 0, housing = 0, buildingsTotal = 0;
     bool hasGranary = false, hasWorkshop = false, hasForge = false, hasTemple = false, hasTownHall = false;
+    bool hasLibrary = false;
+    int mines = 0;                 // số hầm mỏ đang khai thác được
 
     std::map<int, Relation> relations;
     int warTarget = -1;      // nhóm đang bị tấn công (mục tiêu hành quân)

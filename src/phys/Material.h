@@ -87,6 +87,7 @@ enum : MatId {
     CopperOre, Copper, TinOre, Tin, IronOre, Iron, Rust, Gold,
     Sulfur, Saltpeter, Gunpowder, Acid, Lye, Oil,
     CO2, Methane, Hydrogen, SO2,
+    Coal, SilverOre, Silver, Gem, Herb,   // khoáng sản lòng đất (than đá, bạc, đá quý) + thảo dược
     DefaultCount
 };
 }

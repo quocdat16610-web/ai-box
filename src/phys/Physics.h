@@ -43,6 +43,7 @@ struct PhysBody {
     int ownerGroup = -1;
     int design = -1;       // nếu là vật phẩm/đạn chế tạo
     int life = 400;        // tick tối đa
+    float blast = 0;       // >0: bom — phát nổ (năng lượng này) khi chạm đất / trúng mục tiêu
     bool alive = true;
     bool floating = false;
 };

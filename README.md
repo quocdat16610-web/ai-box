@@ -22,6 +22,28 @@ và quan sát chúng **tự suy nghĩ, học hỏi, tiến hoá** thành bộ t�
 * **Vật lý & hoá học**: nhiệt độ khuếch tán, chất lỏng chảy theo độ cao, khí & áp suất, phản ứng theo thuộc tính
   vật liệu; mũi tên/đá/mảnh vỡ bay theo parabol, nổi/chìm theo Archimedes, nổ đẩy văng vật thể & sinh vật;
   bếp & lò luyện là nguồn nhiệt thật trong lưới vật chất.
+* **Lòng đất & khai khoáng**: hàng nghìn mạch khoáng ẩn theo 3 tầng địa chất (than đá, đồng, thiếc, sắt, bạc, vàng,
+  đá quý, lưu huỳnh, diêm tiêu, khoáng lạ). Phải hiểu **địa tầng** mới thăm dò được; dựng **hầm mỏ**, đào xuyên tầng đá
+  (cần cuốc đủ cứng), có thể **sập hầm**, vỉa than sâu **rỉ khí mê-tan** (gặp lửa là nổ); nổ mìn để đào nhanh;
+  quặng đào được → tự hiểu ra luyện kim (thí nghiệm có giả thuyết: "nung quặng với than?").
+* **Khoa học 4 ngành**: Vật lý, Hoá học, **Sinh học** (giải phẫu, dược thảo, thực vật học, di truyền, lây nhiễm),
+  **Địa chất** — 22 khái niệm hiểu ra từ quan sát, trải nghiệm và **nghiên cứu có chủ đích** (thả vật xuống nước,
+  ném đá, giải phẫu xác, đào hố thăm dò…); học giả, thư viện; mỗi nhóm có trình độ riêng từng ngành.
+* **Nơi cư trú**: lều, nhà gỗ, nhà đá, kho, xưởng, lò, đền, thư viện, hầm mỏ… tự xây khi thiếu chỗ ở.
+* **Bộ não có MẠNG NEURON**: mỗi cá thể một mạng 20→16→20 neuron, học từ trải nghiệm (lan truyền ngược theo phần
+  thưởng) và **di truyền + đột biến** sang con cái; kết hợp với Utility AI + GOAP.
+* **IQ, giới tính, nhu cầu & tham vọng riêng**: chỉ số IQ từng cá thể (không trần — có thể vượt người thường), đực/cái;
+  8 nhu cầu (ăn, ngủ, ấm, an toàn, chỗ ở, thuộc về, được tôn trọng, hiểu biết); ước mơ cả đời (thủ lĩnh, giàu có,
+  phát minh, thấu hiểu tự nhiên, con đàn cháu đống…) quyết định cách sống; hạnh phúc / bất mãn.
+* **Cảm xúc & ngôn ngữ riêng — NGHE được**: mỗi tộc tự có từ vựng & ngữ pháp (SVO/SOV) sinh từ âm vị riêng; chúng
+  nói chuyện, cảnh báo, tỏ tình, khoe khoang… kèm cảm xúc. Game **đọc thành tiếng** bằng bộ tổng hợp giọng nói
+  (formant như thanh quản người; giọng theo loài, giới tính, tuổi, cảm xúc; sói hú, gấu gầm) + **trình thông dịch**
+  hiện nghĩa tiếng Việt.
+* **Bom & thuốc nổ**: thuốc súng sinh ra từ hoá học thật (trộn nguội than + lưu huỳnh + diêm tiêu); bom là thiết kế
+  tự phát minh (vỏ kín càng chắc → áp suất càng lớn), ném theo đường đạn và nổ thật.
+* **Mô hình pixel art**: mỗi chủng tộc một dáng (elf tai nhọn, orc nanh, dwarf râu & mũ sắt, yêu tinh tai to, quỷ
+  khổng lồ, sói, hươu có gạc, gấu, thỏ), áo màu bộ tộc, vương miện thủ lĩnh; **dụng cụ cầm tay** vẽ theo đúng thiết kế
+  và màu vật liệu (rìu đá xám, rìu đồng cam…); lớp hiển thị **Lòng đất**.
 * **Chủng tộc & sinh vật**: Người, Elf, Orc, Dwarf, Sói, Hươu, Thỏ, Gấu, Quỷ khổng lồ, Yêu tinh, cùng **loài mới tự tiến hoá**.
 * **AI cá nhân**: quan sát (kể cả phản ứng hoá học & sự kiện vật lý) → suy nghĩ (Utility) → quyết định (GOAP A*)
   → hành động → học (khái niệm, vật liệu, thiết kế, quy trình) → tiến hoá.
@@ -102,10 +124,11 @@ GitHub Actions (`.github/workflows/build.yml`) tự build APK cho mỗi lần pu
 src/core/      ECS sparse-set, lưới không gian, thread pool, toán & RNG
 src/world/     Bản đồ ô, sinh địa hình (noise), mỏ khoáng, núi lửa, thời tiết
 src/phys/      Vật liệu, lưới vật chất (nhiệt/lỏng/khí), quy luật hoá học, vật lý vật thể 2.5D
-src/ai/        Gen, tính cách, trí nhớ, tập quán, GOAP, Brain, công nghệ mở (Invention/Creativity)
+src/ai/        Gen, tính cách, trí nhớ, tập quán, GOAP, Brain, công nghệ mở (Invention/Creativity),
+               mạng neuron (Neural.h), nhu cầu & tham vọng (Drives.h), cảm xúc & lời nói (Speech.h)
 src/civ/       Nhóm xã hội, ngôn ngữ thủ tục, SocietySystem (văn minh, ngoại giao, loài mới)
 src/sim/       Simulation (vòng lặp tick), loài, quyền năng Thần, kịch bản, biên niên sử
-src/app/       Game raylib: renderer pixel art, UI cảm ứng, font tiếng Việt
+src/app/       Game raylib: renderer + mô hình pixel art (Sprites), giọng nói tổng hợp (Voice), UI cảm ứng, font
 src/headless/  Trình chạy không đồ hoạ (test/CI/benchmark)
 android/       Dự án Gradle (NativeActivity, không có mã Java)
 docs/          Tài liệu kiến trúc chi tiết

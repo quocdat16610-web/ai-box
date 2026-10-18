@@ -52,18 +52,19 @@ const ActionDef kActions[kActionCount] = {
     {"Thí nghiệm vật liệu ở lò",  0,                      Experimented,   3.0f, NT,                   true,  true,  DietReq::Any,    SK_CRA},
     {"Chế biến theo quy trình",   0,                      Produced,       3.0f, NT,                   true,  true,  DietReq::Any,    SK_CRA},
     {"Nộp quặng/vật liệu vào kho", HasOre,                Stored,         1.0f, NT,                   true,  true,  DietReq::Any,    -1},
+    {"Nghiên cứu khoa học",       0,                      Studied,        3.0f, NT,                   true,  false, DietReq::Any,    SK_CRA},
 };
 
 const char* kGoalNames[kGoalCount] = {
     "Thư thả", "Ăn", "Nghỉ ngơi", "Chạy trốn", "Tự vệ", "Sinh sản", "Giao tiếp", "Khám phá",
     "Lao động cho nhóm", "Chế tạo", "Sáng tạo", "Xây dựng", "Trồng trọt",
-    "Giữ lãnh thổ", "Thờ cúng", "Chiến tranh", "Giành quyền lực", "Thí nghiệm", "Sản xuất",
+    "Giữ lãnh thổ", "Thờ cúng", "Chiến tranh", "Giành quyền lực", "Thí nghiệm", "Sản xuất", "Nghiên cứu",
 };
 
 const WorldState kGoalStates[kGoalCount] = {
     Explored, Fed, Rested, Safe, EnemyDefeated, Reproduced, Socialized, Explored,
     Stored, HasTool, Invented, Built, Farmed, Marked, Worshipped, EnemyDefeated, Dominant,
-    Experimented, Produced,
+    Experimented, Produced, Studied,
 };
 
 const char* kSkillNames[kSkillCount] = {"Hái lượm", "Săn bắn", "Chế tạo", "Xây dựng", "Chiến đấu", "Xã giao", "Trồng trọt", "Lãnh đạo"};
@@ -84,6 +85,21 @@ bool planActions(WorldState start, WorldState goal, const PlannerAgentView& view
     auto h = [&](WorldState s) { return static_cast<float>(std::bitset<64>(goal & ~s).count()); };
     nodes.push_back({start, 0, h(start), -1, ActionId::Count, 0, false});
     const int kMaxNodes = 300;
+    // Lọc hành động LIÊN QUAN (lan ngược từ mục tiêu qua tiền điều kiện): hành động không góp
+    // phần tạo ra bit nào cần thiết thì không bao giờ nằm trong kế hoạch tối ưu. Không lọc thì
+    // A* tốn hết ngân sách nút cho các tổ hợp hành động rẻ vô ích (ăn, giao tiếp…) và bỏ lỡ
+    // những kế hoạch dài hơn như "gom vật liệu → xây nhà".
+    bool relevant[kActionCount] = {};
+    WorldState needBits = goal & ~start;
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (int a = 0; a < kActionCount; ++a) {
+            if (relevant[a] || !view.available[a] || !(kActions[a].effect & needBits)) continue;
+            relevant[a] = true;
+            WorldState more = kActions[a].pre & ~start & ~needBits;
+            if (more) { needBits |= more; grew = true; }
+        }
+    }
     while (true) {
         // Chọn nút mở có f nhỏ nhất (số nút nhỏ → quét tuyến tính là đủ nhanh).
         int best = -1;
@@ -103,7 +119,7 @@ bool planActions(WorldState start, WorldState goal, const PlannerAgentView& view
         }
         if (cur.depth >= Plan::kMax || static_cast<int>(nodes.size()) > kMaxNodes) continue;
         for (int a = 0; a < kActionCount; ++a) {
-            if (!view.available[a]) continue;
+            if (!relevant[a]) continue;
             const ActionDef& d = kActions[a];
             if ((cur.s & d.pre) != d.pre) continue;
             WorldState ns = cur.s | d.effect;

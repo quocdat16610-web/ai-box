@@ -126,7 +126,7 @@ int main(int argc, char** argv) {
     bool quiet = false;
     std::string expect;
     int expectSpecies = -1;
-    int expectDesigns = -1, expectReactions = -1;
+    int expectDesigns = -1, expectReactions = -1, expectShelters = -1, expectConcepts = -1;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -140,9 +140,12 @@ int main(int argc, char** argv) {
         else if (a == "--expect-stage") expect = next();
         else if (a == "--expect-designs") expectDesigns = std::stoi(next());
         else if (a == "--expect-reactions") expectReactions = std::stoi(next());
+        else if (a == "--expect-shelters") expectShelters = std::stoi(next());
+        else if (a == "--expect-concepts") expectConcepts = std::stoi(next());
         else if (a == "--help") {
             std::printf("worldbox_sim [--scenario sandbox|wolves|humans|twins] [--years N] [--seed S] [--size N] [--threads N] [--quiet]\n"
-                        "             [--stat-every N] [--expect-stage Tribe|Village|Town|City|Nation] [--expect-designs N] [--expect-reactions N]\n");
+                        "             [--stat-every N] [--expect-stage Tribe|Village|Town|City|Nation] [--expect-designs N] [--expect-reactions N]\n"
+                        "             [--expect-shelters N] [--expect-concepts N]\n");
             return 0;
         }
     }
@@ -194,6 +197,51 @@ int main(int argc, char** argv) {
     std::printf("== Sáng tạo: %zu thiết kế, %zu quy trình trên toàn thế giới | phiên sáng tạo %d (ý tưởng %d, thành công %d) | thí nghiệm %d, sản xuất %d ==\n",
                 sim.designs.all.size(), sim.processes.all.size(), sim.stats().inventAttempts, sim.stats().inventTried, sim.stats().inventSuccess,
                 sim.stats().experiments, sim.stats().productions);
+    // ---- Lòng đất, nhu cầu & tham vọng ----
+    {
+        int mines = 0, minesDeep = 0, dwellings = 0;
+        for (int y = 0; y < sim.world.height(); ++y)
+            for (int x = 0; x < sim.world.width(); ++x) {
+                const Tile& t = sim.world.at(x, y);
+                if (t.building == Building::Mine) { mines++; if (t.mineDepth >= t.deepLevel * kMineStep) minesDeep++; }
+                if (t.building != Building::None && buildingInfo(t.building).housing > 0) dwellings++;
+            }
+        std::printf("== Lòng đất: %d mạch khoáng ẩn, %d hầm mỏ (%d đã đào tới mạch) | %d nơi cư trú ==\n",
+                    sim.world.deepDeposits(), mines, minesDeep, dwellings);
+        std::array<int, kAmbitionCount> amb{};
+        float happy = 0; int n = 0;
+        for (Entity e : sim.agents) {
+            if (!sim.species[sim.reg.get<Body>(e).species].dexterous) continue;
+            const Drives& D = sim.reg.get<Mind>(e).drives;
+            amb[static_cast<int>(D.ambition)]++;
+            happy += D.happiness; n++;
+        }
+        // IQ, mạng neuron, lời nói
+        int iqMax = 0; float iqSum = 0; long nnUpd = 0; int iqN = 0, females = 0;
+        for (Entity e : sim.agents) {
+            const Mind& m = sim.reg.get<Mind>(e);
+            if (!sim.species[sim.reg.get<Body>(e).species].dexterous) continue;
+            iqSum += m.iq(); iqMax = std::max(iqMax, m.iq()); iqN++; nnUpd += m.nn.updates;
+            if (sim.reg.get<Body>(e).female) females++;
+        }
+        if (iqN) std::printf("== IQ loài có trí khôn: trung bình %.0f, cao nhất %d | giới tính: %d đực / %d cái | mạng neuron: %.0f lần học/cá thể ==\n",
+                             iqSum / iqN, iqMax, iqN - females, females, nnUpd / static_cast<double>(iqN));
+        int shown = 0;
+        for (Entity e : sim.agents) {
+            const Mind& m = sim.reg.get<Mind>(e);
+            if (m.speech.tick < sim.tick - 300 || m.speech.text.empty() || shown >= 6) continue;
+            if (shown > 2 && !sim.species[sim.reg.get<Body>(e).species].dexterous) continue;
+            const Social& so = sim.reg.get<Social>(e);
+            std::printf("   🗣 %s (%s, %s, IQ %d): «%s» → %s\n", so.name.c_str(), sim.species[sim.reg.get<Body>(e).species].name.c_str(),
+                        sim.reg.get<Body>(e).female ? "cái" : "đực", m.iq(), m.speech.text.c_str(), m.speech.translation.c_str());
+            shown++;
+        }
+        if (n > 0) {
+            std::printf("== Tham vọng (%d cá thể có trí khôn, hạnh phúc TB %.2f):", n, happy / n);
+            for (int k = 1; k < kAmbitionCount; ++k) if (amb[k]) std::printf(" %s %d ·", ambitionName(static_cast<Ambition>(k)), amb[k]);
+            std::printf(" ==\n");
+        }
+    }
     std::printf("\n== Kết thúc sau %.1fs (%.0f tick/s) ==\n", secs, sim.tick / std::max(1e-6, secs));
     for (auto& g : sim.groups) {
         if (!g.alive || g.population() < 3) continue;
@@ -223,6 +271,20 @@ int main(int argc, char** argv) {
         for (int c = 0; c < kConceptCount; ++c) if (g.concepts.test(c)) { concepts += conceptName(static_cast<Concept>(c)); concepts += ", "; }
         std::printf("    %s · trình độ công nghệ %.1f · %zu vật liệu, %zu thiết kế, %zu quy trình\n    Khái niệm: %s\n",
                     g.era.c_str(), g.techLevel, g.materials.size(), g.designs.size(), g.processes.size(), concepts.c_str());
+        std::printf("    Khoa học:");
+        for (int f = 0; f < kScienceCount; ++f) std::printf(" %s %.1f ·", scienceName(static_cast<Science>(f)), g.science[f]);
+        std::printf(" hầm mỏ %d%s\n", g.mines, g.hasLibrary ? " · có thư viện" : "");
+        {
+            std::array<int, static_cast<int>(Building::Count)> bc{};
+            int R = std::max(6, g.territoryRadius + 2);
+            for (int y = g.homeY - R; y <= g.homeY + R; ++y)
+                for (int x = g.homeX - R; x <= g.homeX + R; ++x)
+                    if (sim.world.inBounds(x, y) && sim.world.at(x, y).owner == g.id) bc[static_cast<int>(sim.world.at(x, y).building)]++;
+            std::string bs;
+            for (int b = 1; b < static_cast<int>(Building::Count); ++b)
+                if (bc[b] && static_cast<Building>(b) != Building::ScentMark) bs += std::string(buildingInfo(static_cast<Building>(b)).name) + " " + std::to_string(bc[b]) + ", ";
+            if (!bs.empty()) std::printf("    Công trình: %s\n", bs.c_str());
+        }
         for (int p = 0; p < kPurposeCount; ++p) {
             int d = g.bestDesign[p];
             if (d < 0 || sim.designs[d].primary != static_cast<Purpose>(p)) continue;
@@ -247,6 +309,19 @@ int main(int argc, char** argv) {
         for (long c : sim.world.matter.counts) kinds += c > 0;
         bool ok = kinds >= expectReactions;
         std::printf("Số loại phản ứng hoá học đã xảy ra: %d (yêu cầu ≥ %d) → %s\n", kinds, expectReactions, ok ? "ĐẠT" : "KHÔNG ĐẠT");
+        if (!ok) rc = 1;
+    }
+    if (expectShelters >= 0) {
+        int dwell = 0;
+        for (auto& g : sim.groups) if (g.alive && !g.animal) dwell += g.dwellings;
+        bool ok = dwell >= expectShelters;
+        std::printf("Số nơi cư trú do loài có trí khôn tự xây: %d (yêu cầu ≥ %d) → %s\n", dwell, expectShelters, ok ? "ĐẠT" : "KHÔNG ĐẠT");
+        if (!ok) rc = 1;
+    }
+    if (expectConcepts >= 0) {
+        int known = static_cast<int>(sim.conceptFirsts.count());
+        bool ok = known >= expectConcepts;
+        std::printf("Số khái niệm khoa học đã được hiểu ra: %d/%d (yêu cầu ≥ %d) → %s\n", known, kConceptCount, expectConcepts, ok ? "ĐẠT" : "KHÔNG ĐẠT");
         if (!ok) rc = 1;
     }
     if (!expect.empty()) {

@@ -54,6 +54,8 @@ enum class Building : uint8_t {
     None, Den, Nest, Hut, House, StoneHouse, Wall, Tower, Bridge,
     Granary, Workshop, Forge, Temple, TownHall, Castle, ScentMark, Totem,
     Hearth,   // bếp lửa: nguồn nhiệt ~700°C (nấu ăn, sưởi, nung thử nghiệm)
+    Mine,     // hầm mỏ: giếng đào xuống mạch khoáng dưới lòng đất (chống lò bằng gỗ)
+    Library,  // thư viện / học viện: nơi học giả nghiên cứu & lưu giữ tri thức
     Count
 };
 

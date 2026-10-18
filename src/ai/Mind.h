@@ -20,6 +20,9 @@
 #include "Knowledge.h"
 #include "Goap.h"
 #include "Invention.h"
+#include "Drives.h"
+#include "Neural.h"
+#include "Speech.h"
 #include "../phys/Physics.h"
 #include "../world/Terrain.h"
 #include <cstdio>
@@ -86,6 +89,7 @@ struct Mind {
 
     // Kết quả quan sát tài nguyên gần nhất (pha think ghi, pha act dùng)
     Spot seenFood, seenTree, seenStone, seenOre, seenCorpse, seenTool, seenFire, blockedWater, seenRuin;
+    Spot seenDeep;                          // mạch khoáng lòng đất vừa thăm dò/nhận ra (chưa có hầm)
     // Kích thích phát hiện trong pha think (song song) → xử lý phát minh ở pha act (tuần tự)
     std::array<uint8_t, kStimulusCount> pendingStim{};
 
@@ -105,6 +109,18 @@ struct Mind {
     std::array<std::pair<uint8_t, MatId>, 3> seenPhys{};
     int seenPhysCount = 0;
     long lastShot = 0;
+    // ---- Nhu cầu & tham vọng riêng (xem Drives.h) ----
+    Drives drives;
+    Concept studyTopic = Concept::Count;      // khái niệm đang nghiên cứu
+    // ---- Mạng neuron (trực giác học được) + cảm xúc + lời nói ----
+    NeuralNet nn;
+    std::array<float, kNnIn> nnDecisionIn{};  // đầu vào lúc chọn mục tiêu hiện tại (để học khi xong)
+    float nnStartNeeds = 0, nnStartHappy = 0;
+    long nnGoalTick = 0;
+    Emotion emotion = Emotion::Calm;
+    Utterance speech;                         // câu nói gần nhất
+    float rawIntellect = 0.1f;                // trí tuệ chưa chặn trần (đo IQ: có thể vượt người thường)
+    bool studyStarted = false;
 
     long lastSocialTick = 0, lastMarkTick = 0, lastWorshipTick = 0, lastExploreTick = 0;
     int lastDiscovery = -1;
@@ -112,6 +128,8 @@ struct Mind {
     char thought[96] = "";                  // câu "suy nghĩ" hiển thị cho người chơi
 
     Sapience sapience() const { return sapienceOf(intellect); }
+    // Chỉ số IQ: thang người hiện đại ≈ 100; tiềm năng không trần (gen + học + văn hoá)
+    int iq() const { return static_cast<int>(std::lround(30.0f + rawIntellect * 130.0f)); }
     void think(const char* fmt, ...) WB_PRINTF(2, 3);
     float skillOf(Skill s) const { return skill[static_cast<int>(s)]; }
 };

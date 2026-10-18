@@ -11,8 +11,24 @@ namespace wb {
 
 const char* conceptName(Concept c) {
     static const char* n[] = {"Độ sắc bén", "Đòn bẩy", "Sức nổi", "Tính đàn hồi", "Vật chứa", "Sự cháy", "Cách nhiệt",
-                              "Nóng chảy", "Khử quặng", "Hợp kim", "Chuyển động quay", "Áp suất", "Ma sát sinh nhiệt"};
+                              "Nóng chảy", "Khử quặng", "Hợp kim", "Chuyển động quay", "Áp suất", "Ma sát sinh nhiệt",
+                              "Trọng lực", "Axit – bazơ", "Bảo quản thực phẩm", "Địa tầng & mạch khoáng",
+                              "Giải phẫu", "Dược thảo", "Thực vật học", "Di truyền", "Lây nhiễm"};
+    static_assert(sizeof(n) / sizeof(n[0]) == kConceptCount, "thiếu tên khái niệm");
     return n[static_cast<int>(c)];
+}
+const char* scienceName(Science s) {
+    static const char* n[] = {"Vật lý", "Hoá học", "Sinh học", "Địa chất"};
+    return n[static_cast<int>(s)];
+}
+Science conceptField(Concept c) {
+    switch (c) {
+    case Concept::Combustion: case Concept::Melting: case Concept::Reduction: case Concept::Alloying:
+    case Concept::AcidBase: case Concept::Preservation: return Science::Chemistry;
+    case Concept::Stratigraphy: return Science::Geology;
+    case Concept::Anatomy: case Concept::Medicine: case Concept::Botany: case Concept::Heredity: case Concept::Contagion: return Science::Biology;
+    default: return Science::Physics;
+    }
 }
 const char* shapeName(Shape s) {
     static const char* n[] = {"cục", "mảnh sắc", "cán", "mũi nhọn", "lưỡi", "đầu nặng", "dây", "tấm", "vật chứa",
@@ -21,11 +37,11 @@ const char* shapeName(Shape s) {
 }
 const char* purposeName(Purpose p) {
     static const char* n[] = {"Cắt", "Đào", "Đâm", "Đập", "Bắn xa", "Công thành", "Chuyên chở", "Nổi trên nước",
-                              "Nhiệt độ lò", "Tạo lửa", "Giữ ấm"};
+                              "Nhiệt độ lò", "Tạo lửa", "Giữ ấm", "Phá nổ"};
     return n[static_cast<int>(p)];
 }
 const char* purposeNoun(Purpose p) {
-    static const char* n[] = {"Rìu", "Cuốc", "Giáo", "Chuỳ", "Cung", "Máy bắn đá", "Xe", "Bè", "Lò", "Mồi lửa", "Áo"};
+    static const char* n[] = {"Rìu", "Cuốc", "Giáo", "Chuỳ", "Cung", "Máy bắn đá", "Xe", "Bè", "Lò", "Mồi lửa", "Áo", "Bom"};
     return n[static_cast<int>(p)];
 }
 
@@ -171,11 +187,24 @@ DesignProps evaluateDesign(const MaterialRegistry& reg, const std::vector<Part>&
     if (hardLump && sparkMetal) fire = std::max(fire, 800.0f);
     V(Purpose::FireStart) = fire;
     V(Purpose::Warmth) = sheets > 0 ? warm + (cord ? 1.0f : 0.0f) : 0.0f;   // áo = tấm che + dây buộc
+    // Phá nổ: năng lượng hoá học của thuốc nổ; nén trong vỏ kín (vò, ống, tấm bọc) thì khí cháy không
+    // thoát kịp → áp suất tăng vọt → sức phá lớn gấp nhiều lần; có dây cháy chậm (ngòi) thì ném được.
+    {
+        float charge = 0, casing = 0;
+        for (const Part& p : parts) {
+            const MaterialDef& d = reg[p.mat];
+            if (d.explosive) charge += partMass(reg, p) * std::max(1.0f, d.combustionHeat);
+            else if ((p.shape == Shape::Bowl || p.shape == Shape::Pipe || p.shape == Shape::Sheet) && !d.porous)
+                casing = std::max(casing, std::min(1.0f, d.toughness * 1.5f));
+        }
+        if (charge > 0) V(Purpose::Blast) = charge * 60.0f * (1.0f + casing * 3.0f) * (cord ? 1.15f : 1.0f);
+    }
     return P;
 }
 
 bool canFabricate(const MaterialRegistry& reg, const Part& p, const Workshop& ws) {
     const MaterialDef& d = reg[p.mat];
+    if (d.explosive && d.powder) return p.shape == Shape::Lump;   // thuốc nổ: chỉ gói thành gói/khối
     bool cast = d.metal && ws.heat >= d.meltPoint;                               // đúc: nung chảy rồi rót khuôn
     bool forge = d.metal && ws.heat >= d.meltPoint * 0.6f && ws.smash >= d.hardness; // rèn nóng
     bool carveable = d.organic || p.mat == mat::Wood || p.mat == mat::Bone;

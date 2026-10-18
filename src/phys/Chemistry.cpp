@@ -200,21 +200,23 @@ void reactCell(World& w, MatterGrid& g, int x, int y, Rng& rng, long tick) {
     }
 
     // ---------------- 4. Khử quặng (luyện kim) ----------------
-    MatterSlot* reducer = find(k, mat::Charcoal);
+    // Chất khử: than củi hoặc than đá (đào từ lòng đất)
+    auto findReducer = [&]() { MatterSlot* r = find(k, mat::Charcoal); return r ? r : find(k, mat::Coal); };
+    MatterSlot* reducer = findReducer();
     for (auto& s : cell.s) {
         if (s.empty()) continue;
         const MaterialDef& d = R[s.mat];
         if (d.smeltsTo == kNoMat || T < d.smeltTemp) continue;
-        reducer = find(k, mat::Charcoal);
+        reducer = findReducer();
         if (!reducer) break;
         int n = std::min<int>({static_cast<int>(s.amount), 4, reducer->amount * 2});
         if (n <= 0) continue;
-        MatId ore = s.mat, metal = d.smeltsTo;
+        MatId ore = s.mat, metal = d.smeltsTo, red = reducer->mat;
         consume(s, n);
         consume(*reducer, std::max(1, n / 2));
         produce(k, metal, std::max(1, n * 6 / 10));
         g.addGas(x, y, mat::CO2, n);
-        log(k, ReactionKind::Smelting, ore, mat::Charcoal, metal, mat::CO2);
+        log(k, ReactionKind::Smelting, ore, red, metal, mat::CO2);
     }
 
     // ---------------- 5. Hợp kim: hai kim loại lỏng trộn lẫn → vật liệu mới ----------------

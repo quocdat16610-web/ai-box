@@ -185,6 +185,24 @@ void MaterialRegistry::initDefaults(uint32_t worldSeed) {
     S2.density = 2.6f; S2.meltPoint = -72; S2.boilPoint = -10; S2.toxicity = 0.6f; S2.acidity = 3;
     S2.hydratesTo = mat::Acid; // SO₂ + nước → axit (mưa axit!)
 
+    // ---------------- Khoáng sản dưới lòng đất + sinh học ----------------
+    auto& Co = D[mat::Coal] = base("Than đá", "C", 30, 30, 34);
+    Co.density = 1350; Co.hardness = 2; Co.toughness = 0.2f; Co.ignitionPoint = 420; Co.combustionHeat = 30;
+    Co.burnResidue = mat::Ash; Co.burnGas = mat::CO2;   // nhiên liệu & chất khử như than củi, nhưng phải đào sâu mới có
+
+    auto& AgO = D[mat::SilverOre] = base("Quặng bạc", "Ag₂S", 110, 115, 125);
+    AgO.density = 7200; AgO.meltPoint = 825; AgO.hardness = 2.5f; AgO.toughness = 0.2f; AgO.smeltsTo = mat::Silver; AgO.smeltTemp = 960;
+    auto& Ag = D[mat::Silver] = base("Bạc", "Ag", 215, 220, 230);
+    Ag.density = 10490; Ag.meltPoint = 962; Ag.boilPoint = 2160; Ag.hardness = 2.7f; Ag.toughness = 0.85f; Ag.conductivity = 1.0f;
+    Ag.metal = true; Ag.reactivity = 0.05f; Ag.viscosity = 0.12f;
+
+    auto& Ge = D[mat::Gem] = base("Đá quý", "Al₂O₃", 200, 40, 120);
+    Ge.density = 4000; Ge.meltPoint = 2050; Ge.hardness = 9; Ge.toughness = 0.3f;   // cứng nhất sau kim cương
+
+    auto& He = D[mat::Herb] = base("Thảo dược", "—", 90, 170, 80);
+    He.density = 400; He.hardness = 0.3f; He.toughness = 0.4f; He.organic = true; He.nutrition = 0.5f;   // ăn được (không dùng làm vật liệu chế tạo)
+    He.ignitionPoint = 250; He.combustionHeat = 12; He.burnResidue = mat::Ash; He.burnGas = mat::CO2; He.decaysTo = mat::Dirt;
+
     // ---------------- Khoáng chất lạ (sinh theo seed) ----------------
     // Mỗi thế giới có 2 khoáng chất chưa từng có, thuộc tính ngẫu nhiên → các nền văn
     // minh ở thế giới khác nhau sẽ có vật liệu "thần kỳ" khác nhau.

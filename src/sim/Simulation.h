@@ -70,6 +70,8 @@ public:
     Group* group(int gid) { return (gid >= 0 && gid < static_cast<int>(groups.size()) && groups[gid].alive) ? &groups[gid] : nullptr; }
     int aliveGroupCount() const;
     Group* groupOf(Entity e);
+    // Ngôn ngữ cá thể đang nói: của nhóm nếu có, không thì "tiếng mẹ đẻ" của loài.
+    const Language& languageOf(Entity e);
 
     // ---- LOD: vùng camera đang nhìn (agent ngoài màn hình suy nghĩ thưa hơn) ----
     void setFocusRect(float x0, float y0, float x1, float y1) { focus_[0] = x0; focus_[1] = y0; focus_[2] = x1; focus_[3] = y1; }
@@ -92,6 +94,7 @@ public:
     long tick = 0;
     std::vector<Entity> agents; // danh sách entity có Mind (để duyệt song song)
     TechSet worldFirsts;
+    ConceptSet conceptFirsts;     // khái niệm khoa học đã được ai đó hiểu ra lần đầu trên thế giới
     DesignRegistry designs;       // mọi thiết kế từng được phát minh (phả hệ phát minh toàn cầu)
     ProcessRegistry processes;    // mọi quy trình hoá học từng được hiểu ra
     PhysicsWorld physics;         // vật thể bay/lăn (mũi tên, đá, mảnh vỡ)
