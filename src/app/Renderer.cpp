@@ -3,6 +3,7 @@
 // =============================================================================
 #include "Renderer.h"
 #include "Text.h"
+#include "Sprites.h"
 #include "../sim/Simulation.h"
 #include <cmath>
 
@@ -40,6 +41,8 @@ const char* buildingSprite(Building b) {
     case Building::ScentMark:  return "....""..y.""....""....";
     case Building::Totem:      return ".T..""FTF."".T.."".T..";
     case Building::Hearth:     return "....""sOOs""sOOs""....";
+    case Building::Mine:       return "TwwT""wKKw""wKKw""TssT";   // giếng mỏ tối, khung gỗ chống lò
+    case Building::Library:    return ".RR.""RRRR""SyyS""SDyS";   // mái màu nhóm, kệ sách vàng
     default: return nullptr;
     }
 }
@@ -277,6 +280,22 @@ void Renderer::drawWorld(Simulation& sim, const Camera2D& cam, const RenderOptio
                 float f = std::sin(time * 9 + x) * 0.5f + 0.5f;
                 DrawRectangleV({x * S + 2, y * S + 2}, {S - 4, S - 4}, Color{255, static_cast<unsigned char>(120 + f * 100), 30, 180});
             }
+            // Lớp lòng đất (tầm nhìn của Thần): mạch khoáng ẩn theo màu khoáng, càng sâu càng nhỏ & mờ
+            if (opt.layer == Layer::Underground) {
+                const Tile& tt = sim.world.at(x, y);
+                DrawRectangleV({x * S, y * S}, {S, S}, Color{20, 15, 10, 150});
+                if (tt.deep > 0 && tt.deepMat != kNoMat) {
+                    const MaterialDef& d = R[tt.deepMat];
+                    float k = 1.0f - (tt.deepLevel - 1) * 0.25f;
+                    float sz = S * (0.35f + 0.5f * std::min(1.0f, tt.deep / 200.0f)) * k;
+                    DrawRectangleV({x * S + (S - sz) / 2, y * S + (S - sz) / 2}, {sz, sz}, Color{d.r, d.g, d.b, static_cast<unsigned char>(120 + 40 * k)});
+                }
+                if (tt.building == Building::Mine) {
+                    float depth = std::min(1.0f, tt.mineDepth / static_cast<float>(std::max(1, tt.deepLevel * kMineStep)));
+                    DrawRectangleLinesEx({x * S, y * S, S, S}, 1, Color{255, 220, 120, 230});
+                    DrawRectangleV({x * S + S - 1.5f, y * S + 1}, {1, (S - 2) * depth}, Color{255, 220, 120, 230});   // thước độ sâu hầm
+                }
+            }
             // Lớp nhiệt độ: xanh (lạnh) → xanh lá (ôn hoà) → vàng → đỏ → trắng (cực nóng)
             if (opt.layer == Layer::Heat) {
                 Color hc;
@@ -310,34 +329,23 @@ void Renderer::drawWorld(Simulation& sim, const Camera2D& cam, const RenderOptio
         }
     }
 
-    // Sinh vật
+    // Vật phẩm trên mặt đất (xác, xương, công cụ cũ)
+    if (cam.zoom >= 1.5f) drawGroundItems(sim, static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(x1), static_cast<float>(y1));
+    // Sinh vật: mô hình pixel art theo chủng tộc + dụng cụ đang cầm (xem Sprites.cpp).
+    // Sắp theo y để con đứng trước che con đứng sau.
+    thread_local std::vector<std::pair<float, Entity>> visible;
+    visible.clear();
     for (Entity e : sim.agents) {
         const Transform& tr = sim.reg.get<Transform>(e);
         float px = tr.pos.x * S, py = tr.pos.y * S;
         if (px < tl.x - 8 || py < tl.y - 8 || px > br.x + 8 || py > br.y + 8) continue;
-        const Body& b = sim.reg.get<Body>(e);
-        const Social& so = sim.reg.get<Social>(e);
-        const SpeciesDef& sd = sim.species[b.species];
-        Color c = speciesColor(sim, b.species);
-        float sz = std::clamp(sd.size, 0.4f, 2.0f);
-        bool child = b.ageTicks < sd.adultYears * kTicksPerYear;
-        if (child) sz *= 0.7f;
-        // Nhịp bước chân
-        float bob = tr.moving ? std::sin(time * 14 + entityIndex(e)) * 0.5f : 0;
-        if (sd.dexterous) {
-            // Dạng người: thân mặc "áo" màu nhóm, đầu màu da
-            Color cloth = so.group >= 0 ? groupColor(sim, so.group) : shade(c, -50);
-            DrawRectangleV({px - 1.5f * sz, py - 1.0f * sz + bob}, {3 * sz, 3 * sz}, cloth);
-            DrawRectangleV({px - 1.0f * sz, py - 3.0f * sz + bob}, {2 * sz, 2 * sz}, c);
-            if (heldValue(sim, e, Purpose::Pierce) > 0 || heldValue(sim, e, Purpose::Ranged) > 0) DrawRectangleV({px + 1.5f * sz, py - 3 * sz + bob}, {0.7f, 4 * sz}, Color{200, 200, 210, 255});
-        } else {
-            // Dạng thú: thân ngang + đầu
-            DrawRectangleV({px - 2.2f * sz, py - 1.0f * sz + bob}, {4.4f * sz, 2.4f * sz}, shade(c, -15));
-            DrawRectangleV({px + 1.4f * sz, py - 2.0f * sz + bob}, {1.8f * sz, 1.8f * sz}, c);
-            if (so.group >= 0) DrawRectangleV({px - 0.5f, py - 2.8f * sz}, {1, 1}, groupColor(sim, so.group));
-        }
-        if (b.sleeping) DrawRectangleV({px + 2, py - 5}, {1.2f, 1.2f}, Color{200, 200, 255, 200});
-        if (so.role == Role::Leader) DrawRectangleV({px - 1, py - 5 * sz}, {2, 1}, GOLD);
+        visible.push_back({py, e});
+    }
+    bool detailed = cam.zoom >= 1.8f && visible.size() < 2500;
+    if (detailed) std::sort(visible.begin(), visible.end());
+    for (auto& [py, e] : visible) {
+        const Transform& tr = sim.reg.get<Transform>(e);
+        drawCreatureSprite(sim, e, tr.pos.x * S, tr.pos.y * S + 1.5f, time, detailed);
     }
     // Cá thể được chọn: viền + đường đi tới mục tiêu
     if (sim.reg.valid(opt.selected)) {
@@ -408,6 +416,35 @@ void Renderer::drawOverlay(Simulation& sim, const Camera2D& cam, const RenderOpt
         DrawRectangle(static_cast<int>(sp.x - 10), static_cast<int>(sp.y - 2), 20, 2, Color{0, 0, 0, 150});
         DrawRectangle(static_cast<int>(sp.x - 10), static_cast<int>(sp.y - 2), static_cast<int>(20 * m.intellect), 2, SKYBLUE);
     };
+    // Lời nói: bong bóng thoại bằng ngôn ngữ của chính sinh vật (+ bản dịch nếu bật thông dịch)
+    auto speech = [&](Entity e) {
+        const Mind& m = sim.reg.get<Mind>(e);
+        long age = sim.tick - m.speech.tick;
+        if (m.speech.text.empty() || age > 90) return false;
+        const Transform& tr = sim.reg.get<Transform>(e);
+        Vector2 sp = GetWorldToScreen2D({tr.pos.x * S, tr.pos.y * S - 9}, cam);
+        if (sp.x < -150 || sp.y < -40 || sp.x > GetScreenWidth() + 150 || sp.y > GetScreenHeight() + 40) return false;
+        unsigned char a = static_cast<unsigned char>(std::clamp(255 - static_cast<int>(age) * 2, 60, 255));
+        float f = fs * 0.85f;
+        std::string t = "\"" + m.speech.text + "\"";
+        std::string tr2 = opt.translate ? m.speech.translation : std::string();
+        float tw = std::max(ui::measureText(t, f), tr2.empty() ? 0.0f : ui::measureText(tr2, f * 0.8f));
+        float hgt = f + 4 + (tr2.empty() ? 0 : f * 0.95f);
+        Color bg = m.speech.call ? Color{60, 40, 30, static_cast<unsigned char>(a * 0.8f)} : Color{25, 30, 50, static_cast<unsigned char>(a * 0.85f)};
+        DrawRectangleRounded({sp.x - tw / 2 - 5, sp.y - hgt - 8, tw + 10, hgt + 2}, 0.35f, 6, bg);
+        DrawTriangle({sp.x - 3, sp.y - 6.5f}, {sp.x + 3, sp.y - 6.5f}, {sp.x, sp.y - 1}, bg);
+        ui::drawText(t, sp.x - ui::measureText(t, f) / 2, sp.y - hgt - 6, f, Color{255, 235, 160, a});
+        if (!tr2.empty()) ui::drawText(tr2, sp.x - ui::measureText(tr2, f * 0.8f) / 2, sp.y - hgt - 6 + f + 1, f * 0.8f, Color{170, 235, 190, a});
+        return true;
+    };
+    if (cam.zoom >= 2.2f) {
+        int shown = 0;
+        for (Entity e : sim.agents) {
+            if (shown >= 12) break;
+            if (e != opt.selected && speech(e)) shown++;
+        }
+    }
+    bool selSpeaking = sim.reg.valid(opt.selected) && speech(opt.selected);   // đang nói thì không che bằng bong bóng suy nghĩ
     if (opt.debugThoughts && cam.zoom >= 1.5f) {
         int shown = 0;
         for (Entity e : sim.agents) {
@@ -420,7 +457,7 @@ void Renderer::drawOverlay(Simulation& sim, const Camera2D& cam, const RenderOpt
             shown++;
         }
     }
-    if (sim.reg.valid(opt.selected)) bubble(opt.selected, true);
+    if (sim.reg.valid(opt.selected) && !selSpeaking) bubble(opt.selected, true);
 }
 
 } // namespace wb

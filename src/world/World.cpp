@@ -31,6 +31,8 @@ const BuildingInfo& buildingInfo(Building b) {
         {"Dấu lãnh thổ",      0,  0, 0, ti(Tech::ScentMarking),   0, false, 0.0f, false},
         {"Vật tổ",            2,  0, 0, ti(Tech::Religion),       0, false, 0.0f, true},
         {"Bếp lửa",           2,  3, 0, -1,                       0, false, 0.0f, false},
+        {"Hầm mỏ",            4,  0, 0, -1,                       0, false, 2.0f, true},
+        {"Thư viện",          6,  4, 0, ti(Tech::Writing),        0, false, 2.0f, false},
     };
     return table[static_cast<int>(b)];
 }
@@ -126,6 +128,38 @@ void World::generate(int width, int height, uint32_t seed) {
             break;
         }
     }
+    // ---- Lòng đất: mạch khoáng ẩn theo tầng địa chất ----
+    // Tầng nông: than đá (trầm tích ở vùng thấp), đồng, thiếc; tầng giữa: sắt, bạc, than;
+    // tầng sâu: vàng, đá quý, khoáng chất lạ. Đồi núi bị bào mòn → mạch khoáng nằm nông hơn.
+    ValueNoise dN(seed * 91 + 7), kN(seed * 113 + 3);
+    deepDeposits_ = 0;
+    for (int y = 0; y < h_; ++y)
+        for (int x = 0; x < w_; ++x) {
+            Tile& t = at(x, y);
+            if (isWater(x, y) || t.terrain == Terrain::Lava) continue;
+            float nx = x / 48.0f, ny = y / 48.0f;
+            float v = dN.fbm(nx * 2.6f, ny * 2.6f, 3);
+            if (v < 0.57f) continue;
+            float kind = kN.fbm(nx * 1.7f, ny * 1.7f, 2);
+            int level = 1 + static_cast<int>(clamp01((v - 0.57f) * 4.0f + rng.range(-0.15f, 0.15f)) * 2.99f);
+            bool high = t.terrain == Terrain::Hill || t.terrain == Terrain::Mountain;
+            if (high && level > 1 && rng.chance(0.5f)) level--;
+            MatId m;
+            float k = kind + rng.range(-0.06f, 0.06f);
+            if (level == 1) m = (!high && k < 0.5f) ? mat::Coal : (k < 0.62f ? mat::CopperOre : (k < 0.72f ? mat::TinOre : mat::IronOre));
+            else if (level == 2) m = k < 0.38f ? mat::Coal : (k < 0.62f ? mat::IronOre : (k < 0.74f ? mat::SilverOre : mat::TinOre));
+            else {
+                m = k < 0.45f ? mat::Gold : (k < 0.66f ? mat::Gem : mat::SilverOre);
+                if (k > 0.7f && !materials.exoticOres.empty()) m = materials.exoticOres[static_cast<size_t>(k * 10) % materials.exoticOres.size()];
+            }
+            // Diêm tiêu kết tinh dưới đất khô (sa mạc, thảo nguyên); lưu huỳnh trong khe đá tầng giữa
+            if (level == 1 && (t.terrain == Terrain::Desert || t.terrain == Terrain::Savanna) && k > 0.55f) m = mat::Saltpeter;
+            if (level == 2 && rng.chance(0.12f)) m = mat::Sulfur;
+            t.deepMat = m;
+            t.deepLevel = static_cast<uint8_t>(level);
+            t.deep = static_cast<uint8_t>(std::min(255, 90 + static_cast<int>((v - 0.57f) * 500) + rng.irange(0, 60)));
+            deepDeposits_++;
+        }
     matter.init(*this);
     fullRedraw = true;
 }
@@ -292,6 +326,15 @@ void World::update(long tick, Rng& rng) {
     }
     // Hạn hán + nóng → cháy rừng tự phát
     if (weather_.droughtTicks > 0 && rng.chance(0.02f)) ignite(rng.irange(0, w_ - 1), rng.irange(0, h_ - 1));
+
+    // ---- Hầm mỏ sâu: khí mê-tan rò rỉ từ vỉa than (khí mỏ) — gặp lửa là nổ ----
+    if (tick % 100 == 0)
+        for (int y = 0; y < h_; ++y)
+            for (int x = 0; x < w_; ++x) {
+                const Tile& t = at(x, y);
+                if (t.building == Building::Mine && t.deepMat == mat::Coal && t.mineDepth >= kMineStep * 2 && rng.chance(0.5f))
+                    matter.addGas(x, y, mat::Methane, 8);
+            }
 
     // ---- Vật lý & hoá học: nhiệt, lửa, chất lỏng, khí, phản ứng, chu trình vật chất ----
     matter.update(*this, tick, rng);

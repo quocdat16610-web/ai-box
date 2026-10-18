@@ -83,7 +83,7 @@ struct Inventory {
     int total() const { return food + wood + stone + matTotal(); }
 };
 
-enum class Role : uint8_t { None, Leader, Elder, Hunter, Gatherer, Builder, Farmer, Soldier, Crafter, Priest, Child, Count };
+enum class Role : uint8_t { None, Leader, Elder, Hunter, Gatherer, Builder, Farmer, Soldier, Crafter, Priest, Child, Scholar, Miner, Count };
 const char* roleName(Role r);
 
 struct Social {

@@ -20,6 +20,10 @@ if (MSVC)
     add_compile_options(/utf-8 /bigobj /MP)
     add_compile_definitions(NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
+# Liên kết tĩnh CRT trên MSVC → worldbox.exe chạy ngay, không cần cài VC++ Redistributable.
+# Đặt cả policy mặc định để raylib (FetchContent) dùng cùng runtime, tránh lỗi LNK2038.
+set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 option(WB_BUILD_GAME "Build bản có đồ hoạ (raylib)" ON)
 option(WB_BUILD_HEADLESS "Build trình chạy headless" ON)
@@ -60,6 +64,8 @@ if (WB_BUILD_HEADLESS AND NOT ANDROID)
     add_test(NAME sandbox_runs COMMAND worldbox_sim --scenario sandbox --years 10 --seed 1 --quiet)
     # Công nghệ mở: phải có phát minh thật; vật lý/hoá học: phải xảy ra nhiều loại phản ứng khác nhau
     add_test(NAME humans_invent_and_react COMMAND worldbox_sim --scenario humans --years 30 --seed 8 --quiet --expect-designs 10 --expect-reactions 5)
+    # Con người tự xây nơi cư trú; khoa học (vật lý, hoá học, sinh học, địa chất) được hiểu ra từ quan sát & nghiên cứu
+    add_test(NAME humans_shelter_and_science COMMAND worldbox_sim --scenario humans --years 35 --seed 5 --quiet --expect-shelters 15 --expect-concepts 15)
 endif()
 
 # ---------------- Game (raylib) ----------------
@@ -82,6 +88,8 @@ if (WB_BUILD_GAME)
         src/app/Renderer.cpp
         src/app/Ui.cpp
         src/app/Text.cpp
+        src/app/Sprites.cpp
+        src/app/Voice.cpp
     )
     if (ANDROID)
         # NativeActivity nạp "libmain.so" (khai báo trong AndroidManifest.xml)

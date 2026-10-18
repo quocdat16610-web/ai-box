@@ -31,7 +31,7 @@ enum : uint64_t {
     MateNearby = 1ull << 20, Reproduced = 1ull << 21, AllyNearby = 1ull << 22, Socialized = 1ull << 23,
     Explored = 1ull << 24, Stored = 1ull << 25, Farmed = 1ull << 26, Marked = 1ull << 27,
     Worshipped = 1ull << 28, AtHome = 1ull << 29, GroupFood = 1ull << 30, Dominant = 1ull << 31,
-    Invented = 1ull << 32, Experimented = 1ull << 33, Produced = 1ull << 34,
+    Invented = 1ull << 32, Experimented = 1ull << 33, Produced = 1ull << 34, Studied = 1ull << 35,
 };
 }
 
@@ -43,6 +43,7 @@ enum class ActionId : uint8_t {
     GatherMaterials, Build, DepositWood, DepositStone, DepositFood,
     Farm, MarkTerritory, Worship, ChallengeLeader,
     Experiment, Produce, DepositOre,
+    Study,     // nghiên cứu khoa học có chủ đích (quan sát, giải phẫu, thăm dò, thả vật thử nghiệm)
     Count
 };
 constexpr int kActionCount = static_cast<int>(ActionId::Count);
@@ -72,7 +73,7 @@ const ActionDef& actionDef(ActionId a);
 enum class GoalId : uint8_t {
     Idle, Eat, Rest, Flee, Defend, Reproduce, Socialize, Explore, Work,
     Craft, Invent, Build, Farm, MarkTerritory, Worship, War, Dominate,
-    Experiment, Produce,
+    Experiment, Produce, Study,
     Count
 };
 constexpr int kGoalCount = static_cast<int>(GoalId::Count);

@@ -41,13 +41,35 @@ class Simulation;
 struct Mind;
 
 // ---------------------------------------------------------------- Khái niệm
+// Khái niệm khoa học. Thứ tự không phải "cây": học được theo bất kỳ thứ tự nào, từ
+// quan sát tự nhiên, trải nghiệm hằng ngày hoặc nghiên cứu có chủ đích (xem ActionId::Study).
 enum class Concept : uint8_t {
+    // Vật lý
     Sharpness, Leverage, Buoyancy, Elasticity, Containment, Combustion, Insulation,
-    Melting, Reduction, Alloying, Rotation, Pressure, Friction, Count
+    Melting, Reduction, Alloying, Rotation, Pressure, Friction,
+    Gravity,       // trọng lực: vật ném bay theo đường cong rồi rơi → bắn chính xác hơn
+    // Hoá học
+    AcidBase,      // axit – bazơ: chất chua ăn mòn kim loại, tro/vôi trung hoà axit
+    Preservation,  // bảo quản: muối & khói lửa giữ thịt không thối
+    // Địa chất
+    Stratigraphy,  // địa tầng: khoáng sản nằm thành mạch dưới lòng đất → thăm dò, đào hầm mỏ
+    // Sinh học
+    Anatomy,       // giải phẫu: cấu tạo cơ thể → săn & xẻ thịt hiệu quả, biết chỗ hiểm
+    Medicine,      // dược học: thảo dược chữa lành vết thương
+    Botany,        // thực vật học: hạt nảy mầm, cây cần nước & đất → mùa màng tốt hơn
+    Heredity,      // di truyền: con giống bố mẹ → chọn giống cây trồng
+    Contagion,     // lây nhiễm: bệnh lây qua xác chết & tiếp xúc → vệ sinh, cách ly
+    Count
 };
 constexpr int kConceptCount = static_cast<int>(Concept::Count);
 using ConceptSet = std::bitset<kConceptCount>;
 const char* conceptName(Concept c);
+
+// Ngành khoa học của một khái niệm (để đo trình độ từng ngành).
+enum class Science : uint8_t { Physics, Chemistry, Biology, Geology, Count };
+constexpr int kScienceCount = static_cast<int>(Science::Count);
+const char* scienceName(Science s);
+Science conceptField(Concept c);
 
 // ---------------------------------------------------------------- Hình dạng bộ phận
 enum class Shape : uint8_t {
@@ -79,7 +101,9 @@ struct Part {
 
 // ---------------------------------------------------------------- Mục đích sử dụng
 enum class Purpose : uint8_t {
-    Cut, Dig, Pierce, Smash, Ranged, Siege, Carry, Float, Heat, FireStart, Warmth, Count
+    Cut, Dig, Pierce, Smash, Ranged, Siege, Carry, Float, Heat, FireStart, Warmth,
+    Blast,   // phá nổ: bom / mìn — thuốc nổ nén trong vỏ kín (áp suất khí cháy tăng đột ngột)
+    Count
 };
 constexpr int kPurposeCount = static_cast<int>(Purpose::Count);
 const char* purposeName(Purpose p);
@@ -160,8 +184,9 @@ struct Knowhow {
     std::vector<int> processes;
     std::array<int, kPurposeCount> best{};          // thiết kế tốt nhất biết làm, theo mục đích
     std::array<float, kPurposeCount> frustration{}; // nhu cầu chưa thoả → động lực sáng tạo
-    long lastInvent = -100000, lastExperiment = -100000;
+    long lastInvent = -100000, lastExperiment = -100000, lastStudy = -100000;
     int inventions = 0;      // số phát minh cá nhân
+    std::array<uint16_t, kScienceCount> studies{};  // số lần nghiên cứu có chủ đích theo ngành
     Knowhow() { best.fill(-1); }
 
     bool knowsMat(MatId m) const;

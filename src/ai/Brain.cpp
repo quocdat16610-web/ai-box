@@ -176,11 +176,16 @@ void perceive(Simulation& sim, Entity e, Mind& m, const Transform& tr, const Bod
 
     // ---- Quét tài nguyên trên bản đồ (một lượt duy nhất quanh vị trí) ----
     m.seenFood.reset(); m.seenTree.reset(); m.seenStone.reset(); m.seenOre.reset();
-    m.seenCorpse.reset(); m.seenTool.reset(); m.seenFire.reset();
+    m.seenCorpse.reset(); m.seenTool.reset(); m.seenFire.reset(); m.seenDeep.reset();
     int cx = tileX(tr.pos), cy = tileY(tr.pos);
+
     int r = std::min(12, static_cast<int>(radius));
     int bf = 1 << 30, bt = bf, bs = bf, bo = bf, bc = bf, bfi = bf;
     bool wantsPlants = canEatPlants(me), hands = me.dexterous;
+    // Địa chất: người hiểu "địa tầng" đọc được dấu hiệu bề mặt (đất đổi màu, đá lộ vỉa trên sườn đồi)
+    // để đoán mạch khoáng nằm dưới chân — mạch càng sâu càng cần thông minh & địa hình lộ vỉa.
+    bool geologist = hands && m.know.concepts.test(static_cast<int>(Concept::Stratigraphy));
+    int bd = 1 << 30;
     // Tối ưu: tầm nhìn rộng thì quét thưa (bước 2) theo ô bàn cờ, xen kẽ giữa các lần
     // suy nghĩ → mỗi lần chỉ đọc ~1/2 số ô nhưng vẫn phủ đủ sau 2 nhịp.
     int step = r > 6 ? 2 : 1;
@@ -196,6 +201,16 @@ void perceive(Simulation& sim, Entity e, Mind& m, const Transform& tr, const Bod
             if (hands && t.wood > 25 && !t.fire && d < bt) { bt = d; m.seenTree = {x, y}; }
             if (hands && t.stone > 15 && d < bs) { bs = d; m.seenStone = {x, y}; }
             if (t.ore > 15 && d < bo) { bo = d; m.seenOre = {x, y}; }
+            // Hầm mỏ của nhóm mình = nguồn quặng
+            if (hands && t.building == Building::Mine && t.deep > 10 && t.owner == so.group && so.group >= 0 && d < bo) { bo = d; m.seenOre = {x, y}; }
+            if (geologist && t.deep > 20 && t.building == Building::None && d < bd) {
+                bool exposed = t.terrain == Terrain::Hill || t.terrain == Terrain::Mountain;
+                bool readable = t.deepLevel <= 1 || (t.deepLevel == 2 && (exposed || m.intellect > 0.5f)) ||
+                                (t.deepLevel == 3 && exposed && m.intellect > 0.6f);
+                if (readable && (hash32(static_cast<uint32_t>(x * 73856093 ^ y * 19349663) ^ static_cast<uint32_t>(entityIndex(e))) % 4 == 0)) {
+                    bd = d; m.seenDeep = {x, y};
+                }
+            }
             if (t.fire && d < bfi) { bfi = d; m.seenFire = {x, y}; }
             if (t.itemFlag && d < bc) {
                 for (const auto& it : sim.world.items())
@@ -225,6 +240,8 @@ void perceive(Simulation& sim, Entity e, Mind& m, const Transform& tr, const Bod
         m.pendingStim[static_cast<int>(Stimulus::SeeFire)]++;
     }
     if (m.seenTool.valid()) m.ltm.remember(FactType::OldTool, m.seenTool.x, m.seenTool.y, now);
+    if (m.seenDeep.valid())
+        m.ltm.remember(FactType::DeepOre, m.seenDeep.x, m.seenDeep.y, now, sim.world.at(m.seenDeep.x, m.seenDeep.y).deepMat);
     // Sinh vật có tay khéo đứng gần đá thì hay "nghịch" đá → tích luỹ ý tưởng công cụ đá
     if (hands && m.seenStone.valid() && bs <= 4) m.pendingStim[static_cast<int>(Stimulus::HandleStone)]++;
     if (grp) m.ltm.remember(FactType::Home, grp->homeX, grp->homeY, now, 100000 + so.group);
@@ -332,6 +349,10 @@ bool buildingAllowed(Simulation& sim, const Mind& m, const Group& g, Building b)
     }
     case Building::Hearth:
         return m.know.bestValue(sim.designs, Purpose::FireStart) >= 260.0f || m.know.concepts.test(static_cast<int>(Concept::Combustion));
+    case Building::Mine:
+        // Hầm mỏ: phải hiểu địa tầng, biết chỗ có mạch khoáng, và có dụng cụ đào ra hồn
+        return m.know.concepts.test(static_cast<int>(Concept::Stratigraphy)) && m.ltm.knows(FactType::DeepOre) &&
+               m.know.bestValue(sim.designs, Purpose::Dig) >= 1.5f;
     default: return true;
     }
 }
@@ -354,9 +375,13 @@ Building pickBuilding(Simulation& sim, Mind& m, const Group& g, const SpeciesDef
         if (ok(Building::Hut)) return Building::Hut;
     }
     if (!g.hasHearth && pop >= 3 && ok(Building::Hearth)) return Building::Hearth;
+    // Mỏ: khi kho thiếu quặng/kim loại hoặc là thợ mỏ / người mơ giàu có
+    if (ok(Building::Mine) && g.mines < 1 + pop / 20 &&
+        (g.forgeX >= 0 || m.drives.ambition == Ambition::Wealth || m.rng.uniform() < 0.25f)) return Building::Mine;
     if (ok(Building::Granary) && !g.hasGranary && pop >= 8) return Building::Granary;
     if (g.forgeX < 0 && ok(Building::Forge)) return Building::Forge;
     if (ok(Building::Workshop) && !g.hasWorkshop && pop >= 10) return Building::Workshop;
+    if (ok(Building::Library) && !g.hasLibrary && pop >= 10) return Building::Library;
     if (knows(Tech::Religion) && !g.hasTemple) return ok(Building::Temple) ? Building::Temple : Building::Totem;
     if (ok(Building::TownHall) && !g.hasTownHall && pop >= 12) return Building::TownHall;
     if (ok(Building::Wall) && (g.atWar() || g.culture.militarism > 0.6f) && g.stage >= Stage::Town && m.rng.uniform() < 0.5f)
@@ -469,6 +494,15 @@ void scoreGoals(Simulation& sim, Entity e, Mind& m, const Body& body, const Inve
             case Purpose::Float: return m.blockedWater.valid() ? 0.6f : 0.0f;
             case Purpose::FireStart: return (body.cold > 0.25f || !(g && g->hasHearth)) ? 0.35f : 0.05f;
             case Purpose::Warmth: return body.cold > 0.15f ? 0.3f + body.cold : 0.0f;
+            case Purpose::Blast: {
+                // Bom: chỉ người đã hiểu áp suất + sự cháy và đã biết tới thuốc nổ mới nghĩ tới
+                bool idea = K.concepts.test(static_cast<int>(Concept::Pressure)) && K.concepts.test(static_cast<int>(Concept::Combustion)) &&
+                            K.knowsMat(mat::Gunpowder);
+                if (!idea) return 0.0f;
+                if (g && g->atWar() && so.role == Role::Soldier) return 0.55f;
+                if (so.role == Role::Miner || (g && g->mines > 0)) return 0.3f;   // nổ mìn mở hầm nhanh hơn
+                return m.drives.ambition == Ambition::Inventor ? 0.15f : 0.05f;
+            }
             case Purpose::Heat:
                 if (!g || g->forgeX >= 0) return 0.0f;
                 if (K.concepts.test(static_cast<int>(Concept::Reduction)) || !K.processes.empty()) return 0.4f;
@@ -505,7 +539,7 @@ void scoreGoals(Simulation& sim, Entity e, Mind& m, const Body& body, const Inve
             Workshop ws = workshopOf(sim, e);
             bool inputsOk = ws.heat >= pr.minTemp;
             for (MatId in : pr.inputs) inputsOk = inputsOk && availableMat(sim, e, in) >= 2;
-            if (pr.kind == ReactionKind::Smelting) inputsOk = inputsOk && availableMat(sim, e, mat::Charcoal) >= 1;
+            if (pr.kind == ReactionKind::Smelting) inputsOk = inputsOk && (availableMat(sim, e, mat::Charcoal) >= 1 || availableMat(sim, e, mat::Coal) >= 1);
             bool wanted = !pr.outputs.empty() && g->matCount(pr.outputs[0]) < 12;
             if (inputsOk && wanted) {
                 m.processChoice = pid;
@@ -513,8 +547,123 @@ void scoreGoals(Simulation& sim, Entity e, Mind& m, const Body& body, const Inve
             }
         }
     }
+    // --- Nghiên cứu khoa học có chủ đích (vật lý, sinh học, địa chất) ---
+    Drives& D = m.drives;
+    if (sd.dexterous && adult && m.intellect >= 0.32f) {
+        float st = (0.03f + p.openness * 0.16f + m.intellect * 0.14f) * (0.5f + D.need_(Need::Curiosity));
+        if (so.role == Role::Scholar) st += 0.35f;
+        if (g && g->hasLibrary) st += 0.05f;
+        if (now - m.know.lastStudy < 300) st *= 0.3f;
+        at(GoalId::Study) = st;
+    }
+    // --- NHU CẦU riêng: nhu cầu nào càng thiếu, mục tiêu thoả mãn nó càng được ưu tiên ---
+    if (g && m.buildType != Building::None && buildingInfo(m.buildType).housing > 0 && at(GoalId::Build) > 0)
+        at(GoalId::Build) += D.need_(Need::Shelter) * 0.35f;
+    if (at(GoalId::Socialize) > 0) at(GoalId::Socialize) += D.need_(Need::Belonging) * 0.25f;
+    at(GoalId::Explore) += D.need_(Need::Curiosity) * 0.12f;
+    if (at(GoalId::Invent) > 0) at(GoalId::Invent) += D.need_(Need::Curiosity) * 0.08f;
+    if (at(GoalId::Dominate) > 0) at(GoalId::Dominate) += D.need_(Need::Esteem) * 0.2f;
+    // --- THAM VỌNG riêng: ước mơ cả đời làm lệch trọng số mục tiêu ---
+    auto boost = [&](GoalId gid, float v, bool always = false) { if (always || at(gid) > 0) at(gid) += v; };
+    float drive = D.progress < 1.0f ? 1.0f : 0.5f;
+    switch (D.ambition) {
+    case Ambition::Family:   boost(GoalId::Reproduce, 0.15f * drive); boost(GoalId::Socialize, 0.05f * drive); break;
+    case Ambition::Wealth:   boost(GoalId::Work, 0.15f * drive); break;
+    case Ambition::Power:    boost(GoalId::Dominate, 0.25f * drive); boost(GoalId::Socialize, 0.06f * drive); break;
+    case Ambition::Inventor: boost(GoalId::Invent, 0.2f * drive); boost(GoalId::Experiment, 0.1f * drive); break;
+    case Ambition::Scholar:  boost(GoalId::Study, 0.25f * drive); boost(GoalId::Experiment, 0.08f * drive); break;
+    case Ambition::Builder:  boost(GoalId::Build, 0.25f * drive); break;
+    case Ambition::Warrior:  boost(GoalId::Defend, 0.2f * drive); boost(GoalId::War, 0.2f * drive); break;
+    case Ambition::Explorer: boost(GoalId::Explore, 0.25f * drive, true); break;
+    case Ambition::Devout:   boost(GoalId::Worship, 0.3f * drive); break;
+    default: break;
+    }
+    // Bất mãn kéo dài + tham vọng quyền lực → dễ nổi loạn thách thức thủ lĩnh
+    if (D.happiness < 0.3f && D.ambition == Ambition::Power) boost(GoalId::Dominate, 0.2f);
+    // --- MẠNG NEURON: trực giác học được từ trải nghiệm cộng vào điểm các mục tiêu khả thi ---
+    {
+        std::array<float, kNnIn> x{};
+        for (int i = 0; i < kNeedCount; ++i) x[i] = D.need[i];
+        x[8] = std::min(1.0f, m.stm.threat);
+        x[9] = body.hp / std::max(1.0f, body.maxHp);
+        x[10] = std::min(1.0f, m.stm.allies / 10.0f);
+        x[11] = g ? 1.0f : 0.0f;
+        x[12] = adult ? 1.0f : 0.0f;
+        x[13] = m.intellect;
+        x[14] = p.openness; x[15] = p.agreeableness; x[16] = p.ambition; x[17] = p.fearfulness;
+        x[18] = std::min(1.0f, inv.food / 4.0f);
+        x[19] = D.happiness;
+        m.nn.forward(x);
+        float trust = 0.08f + m.intellect * 0.12f;   // càng thông minh càng dựa vào trực giác đã học
+        for (int k = 0; k < kGoalCount; ++k)
+            if (S[k] > 0) S[k] = std::max(0.01f, S[k] + m.nn.out[k] * trust);
+    }
     // Quán tính: giữ mục tiêu hiện tại một chút để không "đổi ý" liên tục
     if (m.goal != GoalId::Idle && !m.plan.done()) at(m.goal) += 0.12f;
+}
+
+// Tính lại mức thiếu thốn của từng nhu cầu (gọi ở pha suy nghĩ — chỉ ghi vào Mind của chính mình).
+static_assert(kNnOut == kGoalCount, "mạng neuron cần một đầu ra cho mỗi mục tiêu");
+static_assert(kNnIn == kNeedCount + 12, "số đầu vào mạng neuron");
+
+void updateNeeds(Simulation& sim, Entity e, Mind& m, const Body& body, const Social& so) {
+    const SpeciesDef& sd = sim.species[body.species];
+    const Group* g = so.group >= 0 ? &sim.groups[so.group] : nullptr;
+    const Personality& p = m.pers;
+    auto& N = m.drives.need;
+    long now = sim.tick;
+    auto set = [&](Need n, float v) { N[static_cast<int>(n)] = clamp01(v); };
+    set(Need::Food, body.hunger);
+    set(Need::Rest, body.fatigue);
+    set(Need::Warmth, body.cold);
+    set(Need::Safety, m.stm.threat * 0.6f + (body.hp < body.maxHp * 0.5f ? 0.3f : 0.0f));
+    float shelter;
+    if (!sd.dexterous) shelter = (g && g->dwellings == 0 && g->knowledge.test(ti(Tech::Shelter))) ? 0.4f : 0.1f;
+    else if (!g) shelter = 0.7f;
+    else shelter = g->population() > 0 ? 1.0f - std::min(1.0f, g->housing / static_cast<float>(g->population())) : 0.5f;
+    const Weather& w = sim.world.weather();
+    const Transform& tr = sim.reg.get<Transform>(e);
+    if (w.rainTicks > 0 && dist2(tr.pos, {w.rainX, w.rainY}) < w.rainRadius * w.rainRadius) shelter += 0.15f;
+    set(Need::Shelter, shelter * (sd.dexterous ? 1.0f : 0.5f));
+    float lonely = std::min(1.0f, (now - m.lastSocialTick) / 600.0f);
+    set(Need::Belonging, sd.social == SocialType::Solitary ? 0.1f : (!g ? 0.7f : lonely * (0.3f + p.extraversion * 0.6f)));
+    set(Need::Esteem, (0.7f - so.status) * (0.4f + p.ambition));
+    long lastMind = std::max({m.lastExploreTick, m.know.lastStudy, m.know.lastInvent, m.know.lastExperiment});
+    set(Need::Curiosity, std::min(1.0f, (now - lastMind) / 900.0f) * (0.2f + p.openness) * (0.4f + m.intellect));
+    // ---- Cảm xúc hiện tại (nảy sinh từ trạng thái thật) ----
+    const Drives& D = m.drives;
+    Emotion em = Emotion::Calm;
+    if (m.stm.threat > 0.5f || body.hp < body.maxHp * 0.3f) em = p.agreeableness < 0.35f && body.lastAttacker != NullEntity ? Emotion::Anger : Emotion::Fear;
+    else if (body.lastAttacker != NullEntity && p.agreeableness < 0.5f) em = Emotion::Anger;
+    else if (now - m.lastDiscoveryTick < 200 || now - D.ambitionTick < 150) em = Emotion::Pride;
+    else if (so.mate != NullEntity && m.stm.nearestMate == so.mate && m.stm.nearestMate != NullEntity) em = Emotion::Love;
+    else if (D.happiness > 0.75f) em = Emotion::Joy;
+    else if (D.happiness < 0.3f) em = Emotion::Sadness;
+    else if (D.need_(Need::Curiosity) > 0.5f) em = Emotion::Curiosity;
+    m.emotion = em;
+}
+
+// ---------------------------------------------------------------------------
+// LỜI NÓI: ghép chuỗi ý nghĩa thành câu bằng ngôn ngữ riêng của nhóm/loài (pha tuần tự)
+// ---------------------------------------------------------------------------
+void sayList(Simulation& sim, Entity e, const std::vector<Meaning>& what, Entity to = NullEntity, int minGap = 0) {
+    Mind& m = sim.reg.get<Mind>(e);
+    if (sim.tick - m.speech.tick < minGap) return;
+    const Body& b = sim.reg.get<Body>(e);
+    const SpeciesDef& sd = sim.species[b.species];
+    Utterance u;
+    u.meanings = what;
+    u.emotion = m.emotion;
+    u.tick = sim.tick;
+    u.to = to;
+    bool lang = m.known.test(ti(Tech::Language));
+    if (sd.dexterous || lang) composeUtterance(sim.languageOf(e), u, lang && m.intellect >= 0.3f);
+    else composeCall(u, sim.species.root(b.species), sd.size > 1.3f);
+    m.speech = std::move(u);
+}
+
+void say(Simulation& sim, Entity e, std::initializer_list<Meaning> what, Entity to = NullEntity, int minGap = 40) {
+    sayList(sim, e, std::vector<Meaning>(what), to, minGap);
 }
 
 // Bộ lọc hành động + chi phí phụ thuộc cá nhân cho GOAP.
@@ -551,6 +700,10 @@ void makeView(Simulation& sim, Entity e, const Mind& m, const Body& body, const 
     }
     if (m.stm.nearestPrey == NullEntity && !m.ltm.knows(FactType::HuntingGround)) v.costMul[A(ActionId::SearchPrey)] *= 1.5f;
     if (so.group >= 0 && sim.groups[so.group].forgeX >= 0) { v.costMul[A(ActionId::GatherOre)] *= 0.5f; v.costMul[A(ActionId::DepositOre)] *= 0.5f; }
+    if (so.role == Role::Miner) v.costMul[A(ActionId::GatherOre)] *= 0.6f;
+    if (so.role == Role::Scholar) v.costMul[A(ActionId::Study)] *= 0.6f;
+    // Hiểu sự lây nhiễm → ghê sợ ăn xác chết
+    if (m.know.concepts.test(static_cast<int>(Concept::Contagion))) v.costMul[A(ActionId::Scavenge)] *= 3.0f;
 }
 
 // ---------------------------------------------------------------------------
@@ -597,6 +750,95 @@ void wearItem(Ctx& c, Purpose p) {
 
 enum class GatherKind { Wood, Stone, Ore };
 
+bool preciousMat(const MaterialRegistry& R, MatId m) {
+    return m == mat::Gold || m == mat::Silver || m == mat::Gem || (R[m].metal && R[m].generation == 0 && m >= mat::DefaultCount);
+}
+
+// Đào hầm mỏ: trước tiên đào xuyên qua các tầng đá (ra đá), tới mạch khoáng mới ra quặng.
+// Càng sâu càng cần cuốc tốt (độ cứng đá + áp lực tầng đất), và càng dễ sập hầm nếu không
+// chống lò đúng cách (hiểu đòn bẩy + áp suất). Vỉa than sâu còn rỉ khí mê-tan (xem World::update).
+Res mineTile(Ctx& c, Tile& t) {
+    Simulation& sim = c.sim;
+    Mind& m = c.m;
+    const MaterialRegistry& R = sim.world.materials;
+    MatId mt = t.deepMat;
+    int level = t.deepLevel;
+    int reached = t.mineDepth / kMineStep;
+    int digging = std::min(level, reached + 1);           // tầng đang đào
+    float power = heldValue(sim, c.e, Purpose::Dig);
+    float need = std::max(0.8f + digging * 1.1f, (reached >= level ? R[mt].hardness : 0.0f) * 0.6f);
+    if (power < need) {
+        m.know.frustrate(Purpose::Dig, 0.4f);
+        m.think("Hầm mỏ: %s quá cứng — cần cuốc tốt hơn (%.1f/%.1f)", World::depthName(digging), power, need);
+        m.craftBlockedUntil[static_cast<int>(Purpose::Dig)] = 0;   // muốn làm cuốc ngay
+        return Res::Failed;
+    }
+    int work = 10 + static_cast<int>(30.0f / (1.0f + power * 0.5f)) - static_cast<int>(m.skillOf(Skill::Crafting) * 5);
+    if (++m.actionTicks < work) return Res::Running;
+    // ---- Nguy hiểm: sập hầm ----
+    if (t.mineDepth >= kMineStep) {
+        bool props = c.g && c.g->concepts.test(static_cast<int>(Concept::Leverage)) && c.g->concepts.test(static_cast<int>(Concept::Pressure));
+        float risk = 0.006f * reached * (props ? 0.3f : 1.0f) * (c.so.role == Role::Miner ? 0.7f : 1.0f);
+        if (m.rng.chance(risk)) {
+            t.mineDepth = static_cast<uint8_t>(std::max(0, t.mineDepth - kMineStep));
+            c.body.hp -= m.rng.range(10.0f, 35.0f);
+            experience(sim, c.e, Concept::Pressure, 0.5f);   // tầng đất đè xuống: áp lực thật sự
+            m.think("Sập hầm! Đất đá đè xuống...");
+            sim.world.markDirty(c.m.tx, c.m.ty);
+            if (c.body.hp <= 0) {
+                sim.chronicle.add(sim.tick, EventKind::Disaster, c.so.name + " chết vì sập hầm mỏ" + (c.g ? " của " + c.g->displayName() : std::string()),
+                                  c.m.tx, c.m.ty);
+                sim.kill(c.e, 3);
+            }
+            return Res::Failed;
+        }
+    }
+    wearItem(c, Purpose::Dig);
+    sim.world.markDirty(c.m.tx, c.m.ty);
+    if (reached < level) {
+        // Đào xuyên tầng đá: ra đá, thấy các lớp đất đá chồng lên nhau → hiểu địa tầng
+        int prev = reached;
+        int dig = 12 + static_cast<int>(power * 4);
+        int bomb = c.inv.item[static_cast<int>(Purpose::Blast)];
+        if (bomb >= 0) {
+            // Nổ mìn phá đá: xuống sâu nhanh gấp nhiều lần (khói & sóng nổ thoát lên miệng hầm)
+            dig += static_cast<int>(std::min(80.0f, sim.designs[bomb].value(Purpose::Blast) * 0.1f));
+            c.inv.item[static_cast<int>(Purpose::Blast)] = -1;
+            sim.world.matter.addGas(c.m.tx, c.m.ty, mat::CO2, 40);
+            sim.world.matter.addHeat(c.m.tx, c.m.ty, 200);
+            experience(sim, c.e, Concept::Pressure, 0.3f);
+            m.think("Nổ mìn phá đá!");
+        }
+        t.mineDepth = static_cast<uint8_t>(std::min(level * kMineStep, t.mineDepth + dig));
+        c.inv.add(mat::Stone, 2);
+        experience(sim, c.e, Concept::Stratigraphy, 0.06f);
+        if (t.mineDepth / kMineStep > prev) {
+            if (t.mineDepth / kMineStep >= level) {
+                m.think("Đào tới mạch %s ở %s!", R[mt].name.c_str(), World::depthName(level));
+                m.emotion = Emotion::Joy;
+                say(sim, c.e, {Meaning::Ore, Meaning::Here, Meaning::Good}, NullEntity, 0);
+            }
+            else m.think("Hầm đã xuống tới %s", World::depthName(t.mineDepth / kMineStep));
+        }
+        return Res::Done;
+    }
+    // Khai thác mạch khoáng
+    int take = std::min<int>(t.deep, 18 + static_cast<int>(power * 4));
+    t.deep = static_cast<uint8_t>(t.deep - take);
+    int amount = 2 + static_cast<int>(power * 0.5f) + (c.so.role == Role::Miner ? 1 : 0);
+    c.inv.add(mt, amount);
+    experience(sim, c.e, Concept::Stratigraphy, 0.2f);
+    bool firstForGroup = c.g && std::find(c.g->materials.begin(), c.g->materials.end(), mt) == c.g->materials.end();
+    if (m.know.learnMat(mt)) m.think("Khai thác được %s từ lòng đất!", R[mt].name.c_str());
+    if (firstForGroup && (preciousMat(R, mt) || mt == mat::Coal) && c.g->stage >= Stage::Tribe) {
+        c.g->materials.push_back(mt);
+        sim.chronicle.add(sim.tick, EventKind::Discovery,
+                          c.g->displayName() + " lần đầu khai thác " + R[mt].name + " từ " + World::depthName(level) + " lòng đất", c.m.tx, c.m.ty);
+    }
+    if (t.deep == 0) { m.ltm.contradict(FactType::OreSource, c.m.tx, c.m.ty); m.think("Mạch %s đã cạn", R[mt].name.c_str()); }
+    return Res::Done;
+}
+
 // Thu thập tài nguyên: tốc độ & khả năng phụ thuộc VẬT LÝ (sức cắt/đào của công cụ
 // so với độ cứng vật liệu), không phải "có tech hay không".
 Res gatherResource(Ctx& c, GatherKind kind, MatId prefer = kNoMat) {
@@ -608,17 +850,31 @@ Res gatherResource(Ctx& c, GatherKind kind, MatId prefer = kNoMat) {
         if (prefer != kNoMat && kind != GatherKind::Wood) {
             int ox, oy;
             found = c.sim.world.findNearestTile(tileX(c.tr.pos), tileY(c.tr.pos), 18, [&](const Tile& t, int, int) {
-                return kind == GatherKind::Stone ? (t.stone > 15 && t.stoneMat == prefer) : (t.ore > 15 && t.oreMat == prefer);
+                return kind == GatherKind::Stone ? (t.stone > 15 && t.stoneMat == prefer)
+                                                 : ((t.ore > 15 && t.oreMat == prefer) ||
+                                                    (t.building == Building::Mine && t.deep > 10 && t.deepMat == prefer && t.owner == c.so.group));
             }, ox, oy);
             if (found) { c.m.tx = ox; c.m.ty = oy; }
         }
-        if (!found && !pickTarget(c, seen, ft)) return Res::Failed;
+        if (!found && !pickTarget(c, seen, ft)) {
+            // Không thấy, không nhớ chỗ nào → chủ động đi xa tìm (rừng / bãi đá / vỉa quặng gần nhất)
+            int ox, oy;
+            if (!c.sim.world.findNearestTile(tileX(c.tr.pos), tileY(c.tr.pos), 26, [&](const Tile& t, int, int) {
+                    return kind == GatherKind::Wood ? (t.wood > 25 && !t.fire) : (kind == GatherKind::Stone ? t.stone > 15 : t.ore > 15);
+                }, ox, oy))
+                return Res::Failed;
+            c.m.tx = ox; c.m.ty = oy;
+        }
     }
     if (!c.sim.world.inBounds(c.m.tx, c.m.ty)) return Res::Failed;
     Vec2 tgt = tileCenter(c.m.tx, c.m.ty);
     bool walk = c.sim.world.walkable(c.m.tx, c.m.ty);
     if (!moveTo(c.sim, c.e, c.tr, c.body, c.m, tgt, walk ? 0.6f : 1.4f)) return c.tr.stuck > 60 ? Res::Failed : Res::Running;
     Tile& t = c.sim.world.at(c.m.tx, c.m.ty);
+    if (kind == GatherKind::Ore && t.building == Building::Mine && t.ore < 5) {
+        if (t.deep == 0) { c.m.ltm.contradict(ft, c.m.tx, c.m.ty); return Res::Failed; }
+        return mineTile(c, t);
+    }
     uint8_t& field = kind == GatherKind::Wood ? t.wood : (kind == GatherKind::Stone ? t.stone : t.ore);
     if (field < 5) { c.m.ltm.contradict(ft, c.m.tx, c.m.ty); return Res::Failed; }
     const MaterialRegistry& R = c.sim.world.materials;
@@ -666,6 +922,8 @@ Res gatherResource(Ctx& c, GatherKind kind, MatId prefer = kNoMat) {
     } else {
         Brain::stimulate(c.sim, c.e, kind == GatherKind::Stone ? Stimulus::HandleStone : Stimulus::SeeOre);
         if (knappable(R[mt])) experience(c.sim, c.e, Concept::Sharpness, 0.15f);  // mảnh đá vỡ sắc cứa tay
+        // Vỉa đá lộ trên sườn đồi: các lớp đá chồng lên nhau, quặng chạy thành mạch → địa tầng
+        if (t.terrain == Terrain::Hill || t.terrain == Terrain::Mountain) experience(c.sim, c.e, Concept::Stratigraphy, kind == GatherKind::Ore ? 0.04f : 0.01f);
         // Đá trên sườn dốc lăn xuống → khái niệm chuyển động quay
         if (t.height > 0.62f && c.m.rng.chance(0.08f)) {
             PhysBody b;
@@ -701,6 +959,21 @@ bool pickBuildSite(Ctx& c) {
             c.m.tx = x; c.m.ty = y; return true;
         }
         return false;
+    }
+    if (b == Building::Mine) {
+        // Hầm mỏ đặt ngay trên mạch khoáng đã thăm dò được (gần nhà nhất)
+        float best = 1e9f;
+        int R = c.g->territoryRadius + 10;
+        for (const Fact& f : c.m.ltm.facts()) {
+            if (f.type != FactType::DeepOre || !c.sim.world.inBounds(f.x, f.y)) continue;
+            const Tile& t = c.sim.world.at(f.x, f.y);
+            if (t.deep < 20 || t.building != Building::None || !c.sim.world.walkable(f.x, f.y)) continue;
+            if (t.owner >= 0 && t.owner != c.so.group) continue;
+            float d = dist2(tileCenter(f.x, f.y), homePos(*c.g));
+            if (d > R * R || d >= best) continue;
+            best = d; c.m.tx = f.x; c.m.ty = f.y;
+        }
+        return best < 1e9f;
     }
     float r = 2.0f + std::sqrt(static_cast<float>(c.g->buildingsTotal)) * 1.3f;
     if (b == Building::Wall || b == Building::Tower) r = static_cast<float>(c.g->territoryRadius) * 0.8f;
@@ -739,7 +1012,9 @@ bool pickBuildSite(Ctx& c) {
 Res fetchMaterial(Ctx& c, MatId miss) {
     const MaterialDef& md = c.sim.world.materials[miss];
     if (miss == mat::Wood || miss == mat::Fiber) return gatherResource(c, GatherKind::Wood);
-    if (md.smeltsTo != kNoMat || miss == mat::Sulfur || miss == mat::Saltpeter || miss == mat::Gold) return gatherResource(c, GatherKind::Ore, miss);
+    if (md.smeltsTo != kNoMat || miss == mat::Sulfur || miss == mat::Saltpeter || miss == mat::Gold || miss == mat::Coal || miss == mat::Gem)
+        return gatherResource(c, GatherKind::Ore, miss);
+    if (miss == mat::Herb) return Res::Failed;   // thảo dược: hái được khi đi hái lượm
     if (md.metal || md.organic || !md.natural) return Res::Failed;   // kim loại / da / sản phẩm: phải luyện, săn, chế biến
     if (miss == mat::Charcoal || miss == mat::Brick || miss == mat::Glass || miss == mat::Quicklime) return Res::Failed;
     return gatherResource(c, GatherKind::Stone, miss);
@@ -765,7 +1040,9 @@ bool tryShoot(Ctx& c, Entity target) {
     // Ngắm đón đầu một chút theo hướng mục tiêu đang chạy
     Vec2 lead = tp + (c.sim.reg.get<Transform>(target).target - tp).normalized() * std::min(1.5f, dist * 0.05f);
     Vec2 dir = (lead - c.tr.pos).normalized();
-    float aim = angle + c.m.rng.gauss((1.0f - c.m.skillOf(Skill::Hunting)) * 0.04f); // tay nghề quyết định độ chính xác
+    // Tay nghề quyết định độ chính xác; hiểu trọng lực (đường cong rơi) → ngắm chuẩn hơn
+    float spread = (1.0f - c.m.skillOf(Skill::Hunting)) * 0.04f * (c.m.know.concepts.test(static_cast<int>(Concept::Gravity)) ? 0.5f : 1.0f);
+    float aim = angle + c.m.rng.gauss(spread);
     PhysBody b;
     b.kind = BodyKind::Projectile;
     b.pos = c.tr.pos + dir * 0.6f;
@@ -783,6 +1060,103 @@ bool tryShoot(Ctx& c, Entity target) {
     c.sim.physics.spawn(b);
     c.m.lastShot = c.sim.tick;
     wearItem(c, Purpose::Ranged);
+    return true;
+}
+
+// ---- NGHIÊN CỨU KHOA HỌC ----------------------------------------------------
+// Chọn đề tài: một khái niệm CHƯA hiểu mà có thể quan sát/thí nghiệm được quanh đây.
+// Hoá học được nghiên cứu ở lò (ActionId::Experiment), nên không nằm trong danh sách này.
+struct StudyPlan { Concept topic = Concept::Count; int x = -1, y = -1; bool deepen = false; };
+
+bool findItemNear(Simulation& sim, Vec2 p, int r, int& ox, int& oy) {
+    float best = 1e9f;
+    for (const auto& it : sim.world.items())
+        if ((it.kind == ItemKind::Corpse || it.kind == ItemKind::Bones) && it.amount > 0) {
+            float d = dist2(p, tileCenter(it.x, it.y));
+            if (d < best && d < r * r) { best = d; ox = it.x; oy = it.y; }
+        }
+    return best < 1e9f;
+}
+
+float conceptEase(Concept k) {
+    switch (k) {
+    case Concept::Gravity: case Concept::Buoyancy: case Concept::Elasticity: case Concept::Leverage: return 1.0f;
+    case Concept::Rotation: case Concept::Botany: case Concept::Anatomy: return 0.7f;
+    case Concept::Medicine: case Concept::Preservation: return 0.5f;
+    case Concept::Stratigraphy: return 0.45f;
+    case Concept::Heredity: case Concept::Contagion: return 0.25f;
+    default: return 0.6f;
+    }
+}
+
+StudyPlan pickStudy(Ctx& c) {
+    Simulation& sim = c.sim;
+    Mind& m = c.m;
+    const ConceptSet& K = m.know.concepts;
+    auto known = [&](Concept k) { return K.test(static_cast<int>(k)); };
+    int cx = tileX(c.tr.pos), cy = tileY(c.tr.pos);
+    std::vector<StudyPlan> opts;
+    auto add = [&](Concept k, int x, int y) { if (!known(k) && sim.world.inBounds(x, y)) opts.push_back({k, x, y, false}); };
+    int ox, oy;
+    // Sinh học: xác chết / bộ xương (giải phẫu, lây nhiễm), cây cối (thực vật học, dược thảo, di truyền)
+    if (findItemNear(sim, c.tr.pos, 12, ox, oy)) {
+        add(Concept::Anatomy, ox, oy);
+        if (known(Concept::Anatomy) && m.exposure[static_cast<int>(Stimulus::SeeDeath)] > 3) add(Concept::Contagion, ox, oy);
+    }
+    if (m.seenFood.valid()) {
+        add(Concept::Botany, m.seenFood.x, m.seenFood.y);
+        add(Concept::Medicine, m.seenFood.x, m.seenFood.y);
+        if (known(Concept::Botany)) add(Concept::Heredity, m.seenFood.x, m.seenFood.y);
+    }
+    // Địa chất: vỉa đá, mỏ quặng, đồi núi
+    Spot rock = m.seenOre.valid() ? m.seenOre : m.seenStone;
+    if (rock.valid()) add(Concept::Stratigraphy, rock.x, rock.y);
+    // Vật lý: ném đá (trọng lực), thả vật xuống nước (sức nổi), lăn đá dốc (chuyển động quay), bật cành cây (đàn hồi)
+    add(Concept::Gravity, cx, cy);
+    if (sim.world.findNearestTile(cx, cy, 10, [&](const Tile& t, int x, int y) { return sim.world.isWater(x, y) && t.building == Building::None; }, ox, oy))
+        add(Concept::Buoyancy, ox, oy);
+    if (sim.world.findNearestTile(cx, cy, 10, [&](const Tile& t, int, int) { return t.height > 0.62f && terrainInfo(t.terrain).walkable; }, ox, oy))
+        add(Concept::Rotation, ox, oy);
+    if (m.seenTree.valid()) { add(Concept::Elasticity, m.seenTree.x, m.seenTree.y); add(Concept::Leverage, m.seenTree.x, m.seenTree.y); }
+    if (c.g && c.g->hasHearth && c.g->food > 0) add(Concept::Preservation, c.g->hearthX, c.g->hearthY);
+    if (!opts.empty()) return opts[m.rng.irange(0, static_cast<int>(opts.size()) - 1)];
+    // Đã hiểu hết những gì quan sát được quanh đây → đào sâu (tăng trình độ ngành) / thăm dò khoáng sản
+    if (rock.valid()) return {Concept::Stratigraphy, rock.x, rock.y, true};
+    if (m.seenFood.valid()) return {Concept::Botany, m.seenFood.x, m.seenFood.y, true};
+    return {Concept::Gravity, cx, cy, true};
+}
+
+// Ném bom: quả bom là vật thể vật lý thật bay theo đường đạn, chạm đất / trúng người thì NỔ
+// (MatterGrid::explode → nhiệt, khí, sóng xung kích đẩy văng mọi thứ). Dùng một lần.
+bool tryThrowBomb(Ctx& c, Entity target) {
+    int slot = static_cast<int>(Purpose::Blast);
+    int d = c.inv.item[slot];
+    if (d < 0 || !c.sim.reg.valid(target)) return false;
+    Vec2 tp = c.sim.reg.get<Transform>(target).pos;
+    float dist = (tp - c.tr.pos).len();
+    if (dist < 4.0f || dist > 12.0f) return false;   // quá gần thì tự hại mình, quá xa thì ném không tới
+    // Đứng gần đồng đội → không ném
+    bool friends = false;
+    c.sim.grid.query(tp, 3.0f, [&](Entity o, Vec2) {
+        const Social* os = c.sim.reg.pool<Social>().tryGet(o);
+        if (os && os->group == c.so.group && c.so.group >= 0) friends = true;
+    });
+    if (friends) return false;
+    float v = 11.0f, angle;
+    if (!ballisticAngle(v, dist, angle)) return false;
+    Vec2 dir = (tp - c.tr.pos).normalized();
+    PhysBody b;
+    b.kind = BodyKind::Projectile;
+    b.pos = c.tr.pos + dir * 0.6f; b.z = 1.4f;
+    b.vel = dir * (v * std::cos(angle)); b.vz = v * std::sin(angle);
+    b.mass = std::max(0.5f, c.sim.designs[d].props.mass); b.radius = 0.15f;
+    b.owner = c.e; b.ownerGroup = c.so.group; b.design = d; b.mat = mat::Gunpowder; b.life = 200;
+    b.blast = c.sim.designs[d].value(Purpose::Blast) * 0.3f;
+    c.sim.physics.spawn(b);
+    c.inv.item[slot] = -1;
+    c.m.emotion = Emotion::Anger;
+    say(c.sim, c.e, {Meaning::Fire, Meaning::Enemy, Meaning::Go}, target, 0);
+    c.m.think("Ném %s!", c.sim.designs[d].name.c_str());
     return true;
 }
 
@@ -866,7 +1240,7 @@ Res exec(Ctx& c, ActionId a) {
         }
         bool arrived = moveTo(sim, c.e, c.tr, c.body, m, tileCenter(m.tx, m.ty), 0.7f);
         if (arrived || m.actionTicks > 160 || c.tr.stuck > 40) {
-            if (a == ActionId::Explore) m.lastExploreTick = sim.tick;
+            if (a == ActionId::Explore) { m.lastExploreTick = sim.tick; m.drives.explores++; }
             return a == ActionId::Explore ? Res::Done : Res::Failed; // tìm không thấy → lên kế hoạch lại
         }
         return Res::Running;
@@ -880,6 +1254,13 @@ Res exec(Ctx& c, ActionId a) {
         t.food = static_cast<uint8_t>(std::max(0, t.food - units * 15));
         c.inv.food += units;
         Brain::stimulate(sim, c.e, Stimulus::EatPlants);
+        if (c.sd.dexterous) {
+            // Thảo dược mọc lẫn trong rừng, đầm lầy: người hiểu thực vật / dược học nhận ra và hái về
+            bool herbal = t.terrain == Terrain::Forest || t.terrain == Terrain::Jungle || t.terrain == Terrain::Swamp || t.terrain == Terrain::Grass;
+            bool knows = m.know.concepts.test(static_cast<int>(Concept::Botany)) || m.know.concepts.test(static_cast<int>(Concept::Medicine));
+            if (herbal && m.rng.chance(knows ? 0.35f : 0.06f)) { c.inv.add(mat::Herb, 1); m.know.learnMat(mat::Herb); }
+            experience(sim, c.e, Concept::Botany, 0.004f);   // hạt rơi xuống đất ẩm thì nảy mầm
+        }
         return Res::Done;
     }
     case ActionId::Hunt: {
@@ -911,6 +1292,12 @@ Res exec(Ctx& c, ActionId a) {
         mul *= 0.7f + m.intellect * 0.8f; // phối hợp thông minh hơn → hiệu quả hơn
         if (Brain::attack(sim, c.e, m.target, mul)) {
             int meat = static_cast<int>(2 + sim.species[sim.reg.valid(m.target) ? sim.reg.get<Body>(m.target).species : 0].size * 4);
+            if (c.sd.dexterous) {
+                // Xẻ thịt con mồi = bài học giải phẫu; hiểu giải phẫu → xẻ khéo, được nhiều thịt hơn
+                if (m.know.concepts.test(static_cast<int>(Concept::Anatomy))) meat += 2;
+                experience(sim, c.e, Concept::Anatomy, 0.02f);
+                if (c.g && c.g->hasHearth) experience(sim, c.e, Concept::Preservation, 0.006f);   // thịt hun khói lâu hỏng
+            }
             int take = std::min(meat, carryCap(c.sd) + 1);
             c.inv.food += take;
             if (c.sd.dexterous) {
@@ -931,6 +1318,8 @@ Res exec(Ctx& c, ActionId a) {
                 });
             }
             sim.world.dropItem(tileX(pt.pos), tileY(pt.pos), ItemKind::Corpse, std::max(0, meat - take));
+            m.emotion = Emotion::Joy;
+            say(sim, c.e, {Meaning::Food, Meaning::Many, Meaning::Good});
             return Res::Done;
         }
         return Res::Running;
@@ -973,6 +1362,7 @@ Res exec(Ctx& c, ActionId a) {
         return Res::Running;
     }
     case ActionId::Flee: {
+        if (m.actionTicks == 0) { m.emotion = Emotion::Fear; say(sim, c.e, {Meaning::Danger, Meaning::Go}); }
         Vec2 away = (c.tr.pos - m.stm.threatPos).normalized();
         if (away.len2() < 0.1f) away = {m.rng.range(-1, 1), m.rng.range(-1, 1)};
         // Chạy về nhà nếu có nhóm (an toàn trong đám đông)
@@ -997,11 +1387,16 @@ Res exec(Ctx& c, ActionId a) {
         return Res::Running;
     }
     case ActionId::Fight: {
-        if (m.actionTicks == 0) m.target = m.stm.nearestEnemy != NullEntity ? m.stm.nearestEnemy : m.stm.nearestThreat;
+        if (m.actionTicks == 0) {
+            m.target = m.stm.nearestEnemy != NullEntity ? m.stm.nearestEnemy : m.stm.nearestThreat;
+            m.emotion = Emotion::Anger;
+            say(sim, c.e, {Meaning::Enemy, Meaning::Bad, Meaning::Go}, m.target);
+        }
         if (!sim.reg.valid(m.target) || sim.reg.get<Body>(m.target).dead) return m.actionTicks > 0 ? Res::Done : Res::Failed;
         if (++m.actionTicks > 300) return Res::Failed;
         Transform& et = sim.reg.get<Transform>(m.target);
         if (dist2(et.pos, c.tr.pos) > 225) return Res::Failed; // địch chạy mất
+        if (tryThrowBomb(c, m.target)) return Res::Running;
         if (heldValue(sim, c.e, Purpose::Ranged) > 0 && tryShoot(c, m.target)) return sim.reg.get<Body>(m.target).dead ? Res::Done : Res::Running;
         if (!moveTo(sim, c.e, c.tr, c.body, m, et.pos, 0.9f)) return Res::Running;
         if (m.actionTicks % 6) return Res::Running;
@@ -1009,6 +1404,7 @@ Res exec(Ctx& c, ActionId a) {
         if (weapon > 0) wearItem(c, Purpose::Smash);
         if (c.body.hp < c.body.maxHp * 0.5f) { m.know.frustrate(Purpose::Smash, 0.05f); m.know.frustrate(Purpose::Ranged, 0.05f); }
         float mul = 1.0f + weapon * 0.3f + m.skillOf(Skill::Combat) * 0.6f;
+        if (m.know.concepts.test(static_cast<int>(Concept::Anatomy))) mul *= 1.1f;   // biết đánh vào chỗ hiểm
         Brain::stimulate(sim, c.e, Stimulus::Combat);
         if (Brain::attack(sim, c.e, m.target, mul)) return Res::Done;
         return Res::Running;
@@ -1072,6 +1468,8 @@ Res exec(Ctx& c, ActionId a) {
         c.body.reproCooldown = mb.reproCooldown = sim.species[c.body.species].gestationTicks / 2 + 60;
         c.so.mate = mate;
         if (auto* ms = sim.reg.tryGet<Social>(mate)) ms->mate = c.e;
+        m.emotion = Emotion::Love;
+        say(sim, c.e, {Meaning::I, Meaning::Love, Meaning::You}, mate, 0);
         return Res::Done;
     }
     case ActionId::Socialize: {
@@ -1104,9 +1502,45 @@ Res exec(Ctx& c, ActionId a) {
         shareKnowhow(sim, c.e, o, lang);
         // ---- Chia sẻ trí nhớ: "ở chỗ kia có thức ăn / có thú dữ" ----
         float shareP = lang ? 0.9f : 0.3f;
-        for (FactType ft : {FactType::FoodSource, FactType::Danger, FactType::HuntingGround, FactType::OreSource}) {
+        for (FactType ft : {FactType::FoodSource, FactType::Danger, FactType::HuntingGround, FactType::OreSource, FactType::DeepOre}) {
             if (!m.rng.chance(shareP)) continue;
-            if (const Fact* f = m.ltm.best(ft, c.tr.pos)) om->ltm.remember(ft, f->x, f->y, sim.tick, -1, f->confidence * 0.8f);
+            if (const Fact* f = m.ltm.best(ft, c.tr.pos)) om->ltm.remember(ft, f->x, f->y, sim.tick, f->subject, f->confidence * 0.8f);
+        }
+        // ---- Nói chuyện: bày tỏ điều mình biết / cảm xúc / ước mơ bằng tiếng của nhóm ----
+        {
+            using M = Meaning;
+            // Những điều muốn nói (tin tức, cảm xúc, ước mơ) → chọn ngẫu nhiên một
+            std::vector<std::vector<M>> topics;
+            if (m.stm.predators > 0 || m.ltm.knows(FactType::Danger)) topics.push_back({M::Danger, M::There, M::Not, M::Go});
+            if (m.seenFood.valid() && c.body.hunger < 0.4f) topics.push_back({M::There, M::Food, M::Come});
+            if (m.seenDeep.valid() || m.ltm.knows(FactType::DeepOre)) topics.push_back({M::Ore, M::There, M::Want});
+            if (m.seenTree.valid() && m.goal == GoalId::Build) topics.push_back({M::We, M::Build, M::Home});
+            switch (m.emotion) {
+            case Emotion::Joy: topics.push_back({M::I, M::Happy, M::Friend}); break;
+            case Emotion::Sadness: topics.push_back({M::I, M::Sad, M::Help}); break;
+            case Emotion::Love: topics.push_back({M::I, M::Love, M::You}); break;
+            case Emotion::Curiosity: topics.push_back({M::We, M::Learn, M::Many}); break;
+            case Emotion::Pride: topics.push_back({M::I, M::Know, M::Good}); break;
+            case Emotion::Anger: topics.push_back({M::You, M::Bad}); break;
+            case Emotion::Fear: topics.push_back({M::Danger, M::Go}); break;
+            default: topics.push_back({M::Hello, M::Friend}); break;
+            }
+            switch (m.drives.ambition) {
+            case Ambition::Power: topics.push_back({M::I, M::Want, M::Leader}); break;
+            case Ambition::Family: topics.push_back({M::I, M::Want, M::Child}); break;
+            case Ambition::Builder: topics.push_back({M::We, M::Build, M::Home}); break;
+            case Ambition::Scholar: case Ambition::Inventor: topics.push_back({M::I, M::Want, M::Know}); break;
+            case Ambition::Devout: topics.push_back({M::God, M::Good}); break;
+            case Ambition::Wealth: topics.push_back({M::I, M::Want, M::Ore}); break;
+            case Ambition::Warrior: topics.push_back({M::I, M::Hunt, M::Enemy}); break;
+            case Ambition::Explorer: topics.push_back({M::We, M::Go, M::There}); break;
+            default: break;
+            }
+            if (lang) topics.push_back({M::I, M::Teach, M::You});
+            const auto& pickT = topics[m.rng.irange(0, static_cast<int>(topics.size()) - 1)];
+            sayList(sim, c.e, pickT, o);
+            // Người nghe đáp lại
+            if (m.rng.chance(0.5f)) say(sim, o, {om->emotion == Emotion::Joy ? M::Good : M::Know, M::Friend}, c.e, 0);
         }
         // Uy tín xã hội
         c.so.status = std::min(1.0f, c.so.status + 0.01f);
@@ -1203,29 +1637,53 @@ Res exec(Ctx& c, ActionId a) {
         if (m.actionTicks == 0) {
             // Nạp nguyên liệu THẬT vào ô lò → hoá học trong MatterGrid tự diễn ra
             std::vector<MatId> load;
+            bool coldMix = false;   // trộn nguội (thuốc súng): làm ở chỗ mát cạnh lò, không cho vào lửa
+            m.tx = sx; m.ty = sy;
             if (pr) load = pr->inputs;
             else {
-                // Thí nghiệm: ghép ngẫu nhiên 2–3 vật liệu đang có — kết quả không ai biết trước
+                // Thí nghiệm: ghép 2–3 vật liệu đang có — kết quả không ai biết trước
                 std::vector<MatId> pool;
                 for (MatId mt : m.know.materials)
                     if (sim.world.materials[mt].phaseAt(20) == Phase::Solid && availableMat(sim, c.e, mt) >= 2) pool.push_back(mt);
                 if (pool.size() < 2) return Res::Failed;
-                int n = std::min<int>(static_cast<int>(pool.size()), m.rng.irange(2, 3));
-                for (int i = 0; i < n; ++i) {
-                    MatId pick = pool[m.rng.irange(0, static_cast<int>(pool.size()) - 1)];
-                    if (std::find(load.begin(), load.end(), pick) == load.end()) load.push_back(pick);
+                // Thí nghiệm CÓ GIẢ THUYẾT: người thông minh suy luận từ điều đã quan sát ("đá màu lạ
+                // trong lửa than thì ra gì?", "bột vàng của núi lửa cháy rất dữ...") thay vì thử bừa
+                const MaterialRegistry& MR = sim.world.materials;
+                MatId reducer = availableMat(sim, c.e, mat::Charcoal) >= 2 ? static_cast<MatId>(mat::Charcoal)
+                              : (availableMat(sim, c.e, mat::Coal) >= 2 ? static_cast<MatId>(mat::Coal) : kNoMat);
+                std::vector<MatId> ores;
+                for (MatId mt : pool) if (MR[mt].smeltsTo != kNoMat && mt != mat::Rust) ores.push_back(mt);
+                bool hypo = m.rng.chance(0.15f + m.intellect * 0.6f);
+                if (hypo && reducer != kNoMat && !ores.empty()) {
+                    load = {ores[m.rng.irange(0, static_cast<int>(ores.size()) - 1)], reducer};   // quặng + chất khử
+                    m.think("Giả thuyết: nung %s với %s trong lò?", MR[load[0]].name.c_str(), MR[reducer].name.c_str());
+                } else if (hypo && availableMat(sim, c.e, mat::Charcoal) >= 2 && availableMat(sim, c.e, mat::Sulfur) >= 2 &&
+                           availableMat(sim, c.e, mat::Saltpeter) >= 2 && m.know.concepts.test(static_cast<int>(Concept::Combustion))) {
+                    load = {mat::Saltpeter, mat::Sulfur, mat::Charcoal};                           // hỗn hợp cháy mạnh
+                    coldMix = true;
+                    m.tx = tileX(c.tr.pos); m.ty = tileY(c.tr.pos);
+                    if (sim.world.matter.temp(m.tx, m.ty) > 200) return Res::Failed;
+                    m.think("Giả thuyết: trộn nguội diêm tiêu, lưu huỳnh và than?");
+                } else {
+                    int n = std::min<int>(static_cast<int>(pool.size()), m.rng.irange(2, 3));
+                    for (int i = 0; i < n; ++i) {
+                        MatId pick = pool[m.rng.irange(0, static_cast<int>(pool.size()) - 1)];
+                        if (std::find(load.begin(), load.end(), pick) == load.end()) load.push_back(pick);
+                    }
                 }
                 m.know.lastExperiment = sim.tick;
                 m.think("Thí nghiệm: cho %zu thứ vào lửa xem sao...", load.size());
             }
             if (pr) sim.statsMut().productions++; else sim.statsMut().experiments++;
+            if (pr && pr->kind == ReactionKind::Mixing) { coldMix = true; m.tx = tileX(c.tr.pos); m.ty = tileY(c.tr.pos); }   // quy trình trộn: làm nguội
+            (void)coldMix;
             for (MatId mt : load) {
                 int units = std::min(4, availableMat(sim, c.e, mt));
                 if (units <= 0) return Res::Failed;
                 consumeMat(sim, c.e, mt, units);
-                G.addMatter(sx, sy, mt, units);
+                G.addMatter(m.tx, m.ty, mt, units);
             }
-            if (pr && pr->lowOxygen) G.addGas(sx, sy, mat::CO2, 220); // vùi kín bằng đất → thiếu oxi (lò than)
+            if (pr && pr->lowOxygen) G.addGas(m.tx, m.ty, mat::CO2, 220); // vùi kín bằng đất → thiếu oxi (lò than)
             m.actionTicks = 1;
             return Res::Running;
         }
@@ -1233,15 +1691,15 @@ Res exec(Ctx& c, ActionId a) {
         // Thu sản phẩm: mọi chất rắn còn lại trong lò → kho chung (và biết thêm vật liệu)
         bool ready = m.actionTicks > 90;
         if (pr && m.actionTicks % 10 == 0)
-            for (MatId out : pr->outputs) if (G.amountOf(sx, sy, out) > 0) ready = true;
+            for (MatId out : pr->outputs) if (G.amountOf(m.tx, m.ty, out) > 0) ready = true;
         if (!ready) return Res::Running;
         int collected = 0;
-        for (auto& slot : G.cell(sx, sy).s) {
+        for (auto& slot : G.cell(m.tx, m.ty).s) {
             if (slot.empty()) continue;
             const MatId got = slot.mat;   // sao chép trước: takeMatter sẽ xoá ngăn
             const MaterialDef& d = sim.world.materials[got];
-            if (d.phaseAt(G.temp(sx, sy)) == Phase::Gas) continue;
-            int n = G.takeMatter(sx, sy, got, slot.amount);
+            if (d.phaseAt(G.temp(m.tx, m.ty)) == Phase::Gas) continue;
+            int n = G.takeMatter(m.tx, m.ty, got, slot.amount);
             c.g->addMat(got, n);
             const bool wantedOut = pr && std::find(pr->outputs.begin(), pr->outputs.end(), got) != pr->outputs.end();
             if (!wantedOut && (got == mat::Wood || got == mat::Charcoal)) continue;   // nhiên liệu chưa cháy hết
@@ -1319,6 +1777,13 @@ Res exec(Ctx& c, ActionId a) {
         if (m.buildType == Building::Bridge) m.blockedWater.reset();
         c.so.status = std::min(1.0f, c.so.status + 0.02f);
         c.g->buildingsTotal++;
+        m.drives.builds++;
+        m.emotion = Emotion::Pride;
+        say(sim, c.e, {Meaning::We, Meaning::Build, Meaning::Home, Meaning::Good});
+        if (m.buildType == Building::Mine) {
+            sim.world.at(m.tx, m.ty).mineDepth = 0;
+            m.think("Dựng hầm mỏ trên mạch %s", sim.world.materials[sim.world.at(m.tx, m.ty).deepMat].name.c_str());
+        }
         m.buildType = Building::None;
         return Res::Done;
     }
@@ -1331,10 +1796,21 @@ Res exec(Ctx& c, ActionId a) {
         if (a == ActionId::DepositWood) { c.g->wood += c.inv.wood; c.inv.wood = 0; }
         if (a == ActionId::DepositStone || a == ActionId::DepositOre) {
             c.g->stone += c.inv.stone; c.inv.stone = 0;
-            for (auto& [mt, n] : c.inv.mats) c.g->addMat(mt, n);   // quặng, đất sét, đá lửa... vào kho chung
-            c.inv.mats.clear();
+            // Người mơ giàu có giữ lại vàng, bạc, đá quý làm của riêng; còn lại vào kho chung
+            bool greedy = m.drives.ambition == Ambition::Wealth;
+            std::vector<std::pair<MatId, int>> keep;
+            for (auto& [mt, n] : c.inv.mats) {
+                if (greedy && preciousMat(sim.world.materials, mt)) keep.push_back({mt, n});
+                else c.g->addMat(mt, n);   // quặng, đất sét, đá lửa... vào kho chung
+            }
+            c.inv.mats = keep;
         }
-        if (a == ActionId::DepositFood) { c.g->food += c.inv.food; c.inv.food = 0; }
+        if (a == ActionId::DepositFood) {
+            // Bảo quản (muối/hun khói) → ít hao hụt khi cất trữ
+            int f = c.inv.food;
+            if (m.know.concepts.test(static_cast<int>(Concept::Preservation))) f += f / 4;
+            c.g->food += f; c.inv.food = 0;
+        }
         return Res::Done;
     }
     case ActionId::Farm: {
@@ -1359,6 +1835,11 @@ Res exec(Ctx& c, ActionId a) {
         if (t.terrain != Terrain::Farmland) { sim.world.setTerrain(m.tx, m.ty, Terrain::Farmland); t.food = 20; t.owner = static_cast<int16_t>(c.so.group); }
         else if (t.food > 60) {
             int crop = 3 + static_cast<int>(m.skillOf(Skill::Farming) * 4) + static_cast<int>(std::min(4.0f, heldValue(sim, c.e, Purpose::Dig)));
+            // Sinh học nông nghiệp: hiểu cây cần gì (thực vật học), giữ hạt của cây tốt nhất (di truyền)
+            if (m.know.concepts.test(static_cast<int>(Concept::Botany))) crop += 2;
+            if (m.know.concepts.test(static_cast<int>(Concept::Heredity))) crop += 2;
+            experience(sim, c.e, Concept::Botany, 0.02f);
+            if (m.know.concepts.test(static_cast<int>(Concept::Botany))) experience(sim, c.e, Concept::Heredity, 0.006f);
             t.food = 0;
             c.g->food += crop; // nộp thẳng vào kho (đóng thuế nếu có luật)
             sim.world.markDirty(m.tx, m.ty);
@@ -1388,6 +1869,8 @@ Res exec(Ctx& c, ActionId a) {
         if (!goHome(c, 2.5f)) return c.tr.stuck > 60 ? Res::Failed : Res::Running;
         if (++m.actionTicks < 30) return Res::Running;
         m.lastWorshipTick = sim.tick;
+        m.drives.worships++;
+        say(sim, c.e, {Meaning::God, Meaning::Help, Meaning::We});
         c.so.status = std::min(1.0f, c.so.status + (c.so.role == Role::Priest ? 0.02f : 0.005f));
         return Res::Done;
     }
@@ -1414,6 +1897,84 @@ Res exec(Ctx& c, ActionId a) {
         m.pers.ambition = clamp01(m.pers.ambition - 0.1f); // thất bại → bớt tham vọng
         return Res::Failed;
     }
+    case ActionId::Study: {
+        if (m.actionTicks == 0) {
+            StudyPlan sp = pickStudy(c);
+            if (sp.topic == Concept::Count) return Res::Failed;
+            m.studyTopic = sp.topic; m.tx = sp.x; m.ty = sp.y; m.studyStarted = false;
+            m.think("Nghiên cứu %s: %s%s", scienceName(conceptField(sp.topic)), conceptName(sp.topic), sp.deepen ? " (tìm hiểu sâu hơn)" : "...");
+        }
+        m.actionTicks++;
+        bool water = sim.world.isWater(m.tx, m.ty);
+        if (!moveTo(sim, c.e, c.tr, c.body, m, tileCenter(m.tx, m.ty), water ? 1.6f : 1.0f))
+            return c.tr.stuck > 60 || m.actionTicks > 500 ? Res::Failed : Res::Running;
+        Concept topic = m.studyTopic;
+        // Bắt đầu quan sát: thí nghiệm vật lý thả/ném vật thật → sự kiện vật lý thật mà mọi người xung quanh đều thấy
+        if (!m.studyStarted) {
+            m.studyStarted = true;
+            m.actionTicks = 1;   // đếm thời gian quan sát từ lúc tới nơi
+            PhysBody b;
+            b.kind = BodyKind::Item; b.mass = 2; b.radius = 0.2f; b.life = 200; b.owner = c.e; b.ownerGroup = c.so.group;
+            b.pos = c.tr.pos; b.mat = mat::Stone;
+            switch (topic) {
+            case Concept::Gravity: b.z = 1.5f; b.vz = 6; b.vel = {m.rng.range(-3.f, 3.f), m.rng.range(-3.f, 3.f)}; sim.physics.spawn(b); break;
+            case Concept::Buoyancy:
+                b.mat = m.rng.chance(0.5f) ? mat::Wood : mat::Stone; b.z = 1.2f; b.vz = 2;
+                b.vel = (tileCenter(m.tx, m.ty) - c.tr.pos).normalized() * 3.0f; sim.physics.spawn(b); break;
+            case Concept::Rotation:
+                b.kind = BodyKind::Boulder; b.mass = 25; b.radius = 0.4f; b.vel = {m.rng.range(-2.f, 2.f), m.rng.range(-2.f, 2.f)}; sim.physics.spawn(b); break;
+            default: break;
+            }
+        }
+        int dur = 50 - static_cast<int>(m.intellect * 25);
+        if (m.actionTicks < dur) return Res::Running;
+        // Kết luận: xác suất hiểu ra tăng theo trí tuệ, thư viện, chữ viết, vai trò học giả;
+        // khái niệm trừu tượng (di truyền, lây nhiễm, địa tầng) khó hơn nhiều so với "vật ném thì rơi"
+        float chance = (0.1f + m.intellect * 0.25f) * conceptEase(topic);
+        if (c.so.role == Role::Scholar) chance *= 1.4f;
+        if (c.g && c.g->hasLibrary) chance *= 1.4f;
+        if (m.known.test(ti(Tech::Writing))) chance *= 1.25f;
+        bool before = m.know.concepts.test(static_cast<int>(topic));
+        experience(sim, c.e, topic, chance);
+        Science field = conceptField(topic);
+        uint16_t& st = m.know.studies[static_cast<int>(field)];
+        if (st < 60000) st++;
+        m.know.lastStudy = sim.tick;
+        m.lastExploreTick = std::max(m.lastExploreTick, sim.tick - 200);
+        // Thành quả phụ theo ngành
+        switch (topic) {
+        case Concept::Anatomy: case Concept::Contagion: m.know.learnMat(mat::Bone); break;
+        case Concept::Medicine: case Concept::Botany: case Concept::Heredity:
+            if (m.rng.chance(0.4f)) { c.inv.add(mat::Herb, 1); m.know.learnMat(mat::Herb); }
+            break;
+        case Concept::Stratigraphy: {
+            // Đào hố thăm dò: thấy trực tiếp mạch khoáng nông ngay dưới chân; nhà địa chất còn đoán được xung quanh
+            bool geo = m.know.concepts.test(static_cast<int>(Concept::Stratigraphy));
+            int R = geo ? 4 + static_cast<int>(m.intellect * 4) : 1;
+            int found = 0;
+            for (int dy = -R; dy <= R; ++dy)
+                for (int dx = -R; dx <= R; ++dx) {
+                    int x = m.tx + dx, y = m.ty + dy;
+                    if (!sim.world.inBounds(x, y)) continue;
+                    const Tile& t = sim.world.at(x, y);
+                    if (t.deep < 20 || (t.deepLevel > 1 && !geo) || (t.deepLevel == 3 && m.intellect < 0.45f)) continue;
+                    m.ltm.remember(FactType::DeepOre, x, y, sim.tick, t.deepMat);
+                    if (found++ == 0)
+                        m.think("Thăm dò: dưới đất có %s (%s)!", sim.world.materials[t.deepMat].name.c_str(), World::depthName(t.deepLevel));
+                }
+            if (found == 0 && geo) m.think("Thăm dò: vùng này không có mạch khoáng");
+            experience(sim, c.e, Concept::Stratigraphy, 0.1f);
+            break;
+        }
+        default: break;
+        }
+        if (!before && m.know.concepts.test(static_cast<int>(topic))) {
+            c.so.status = std::min(1.0f, c.so.status + 0.03f);
+            m.emotion = Emotion::Pride;
+            say(sim, c.e, {Meaning::I, Meaning::Know, Meaning::Good}, NullEntity, 0);
+        }
+        return Res::Done;
+    }
     default:
         return Res::Failed;
     }
@@ -1422,6 +1983,129 @@ Res exec(Ctx& c, ActionId a) {
 // ---------------------------------------------------------------------------
 // 7. HỌC từ kết quả hành động
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// THAM VỌNG: chọn lúc trưởng thành theo tính cách; đo tiến độ; đạt được → hạnh phúc & mơ lớn hơn
+// ---------------------------------------------------------------------------
+Ambition chooseAmbition(Simulation& sim, Entity e, Mind& m) {
+    const Body& b = sim.reg.get<Body>(e);
+    const SpeciesDef& sd = sim.species[b.species];
+    const Social& so = sim.reg.get<Social>(e);
+    const Personality& p = m.pers;
+    const Group* g = so.group >= 0 ? &sim.groups[so.group] : nullptr;
+    std::array<float, kAmbitionCount> w{};
+    auto W = [&](Ambition a) -> float& { return w[static_cast<int>(a)]; };
+    if (!sd.dexterous || m.intellect < 0.25f) {
+        W(Ambition::Survive) = 1.0f;
+        W(Ambition::Family) = 0.5f + sim.reg.get<GenomeC>(e).genome[Gene::Fertility] * 0.5f;
+        if (sd.social == SocialType::Pack || sd.social == SocialType::Tribal) W(Ambition::Power) = p.ambition * p.ambition * 1.5f;
+    } else {
+        W(Ambition::Family) = 0.25f + p.extraversion * 0.35f + p.agreeableness * 0.2f;
+        W(Ambition::Wealth) = p.diligence * 0.4f + p.ambition * 0.4f;
+        W(Ambition::Power) = p.ambition * p.ambition * 1.3f + (1 - p.agreeableness) * 0.2f;
+        W(Ambition::Inventor) = p.openness * 0.7f + m.intellect * 0.6f - 0.3f;
+        W(Ambition::Scholar) = p.openness * 0.5f + m.intellect * 0.9f - 0.3f;
+        W(Ambition::Builder) = p.diligence * 0.7f;
+        W(Ambition::Warrior) = (1 - p.agreeableness) * 0.6f + (1 - p.fearfulness) * 0.3f - 0.2f;
+        W(Ambition::Explorer) = p.openness * 0.45f + (1 - p.fearfulness) * 0.35f - 0.15f;
+        if (g && g->knowledge.test(ti(Tech::Religion))) W(Ambition::Devout) = g->culture.piety * 0.9f;
+        if (so.role == Role::Scholar) W(Ambition::Scholar) += 0.4f;
+        if (so.role == Role::Soldier) W(Ambition::Warrior) += 0.3f;
+        if (so.role == Role::Builder) W(Ambition::Builder) += 0.3f;
+        if (so.role == Role::Miner) W(Ambition::Wealth) += 0.3f;
+        if (so.role == Role::Priest) W(Ambition::Devout) += 0.5f;
+    }
+    float tot = 0;
+    for (float& v : w) { v = std::max(0.0f, v); tot += v; }
+    if (tot <= 0) return Ambition::Survive;
+    float r = m.rng.uniform() * tot;
+    for (int i = 0; i < kAmbitionCount; ++i) { r -= w[i]; if (r <= 0) return static_cast<Ambition>(i); }
+    return Ambition::Survive;
+}
+
+float ambitionProgress(Simulation& sim, Entity e, const Mind& m) {
+    const Drives& D = m.drives;
+    const Body& b = sim.reg.get<Body>(e);
+    const Social& so = sim.reg.get<Social>(e);
+    float L = 1.0f + D.ambitionLevel;
+    switch (D.ambition) {
+    case Ambition::Survive: return b.ageTicks / (sim.species[b.species].adultYears * 2.0f * L * kTicksPerYear);
+    case Ambition::Family: return so.children / (4.0f * L);
+    case Ambition::Wealth: {
+        const Inventory& inv = sim.reg.get<Inventory>(e);
+        int n = 0;
+        for (auto& [mt, c] : inv.mats) if (preciousMat(sim.world.materials, mt)) n += c;
+        return n / (6.0f * L);
+    }
+    case Ambition::Power: {
+        const Group* g = so.group >= 0 ? &sim.groups[so.group] : nullptr;
+        if (g && g->leader == e) return D.ambitionLevel == 0 ? 1.0f : std::min(1.0f, g->population() / (20.0f * L));
+        return so.status * 0.9f;
+    }
+    case Ambition::Inventor: return m.know.inventions / (2.0f * L);
+    case Ambition::Scholar: return (m.know.concepts.count() + (m.know.studies[0] + m.know.studies[1] + m.know.studies[2] + m.know.studies[3]) * 0.1f) / (6.0f + 6.0f * L);
+    case Ambition::Builder: return D.builds / (4.0f * L);
+    case Ambition::Warrior: return b.kills / (4.0f * L);
+    case Ambition::Explorer: return D.explores / (12.0f * L);
+    case Ambition::Devout: return D.worships / (8.0f * L);
+    default: return 0;
+    }
+}
+
+void updateAmbition(Simulation& sim, Entity e, Mind& m) {
+    Drives& D = m.drives;
+    const Body& b = sim.reg.get<Body>(e);
+    if (!isAdult(sim, b)) return;
+    if (D.ambition == Ambition::None) {
+        D.ambition = chooseAmbition(sim, e, m);
+        D.ambitionTick = sim.tick;
+        if (D.ambition != Ambition::Survive) m.think("Mơ ước của đời mình: %s", ambitionName(D.ambition));
+        return;
+    }
+    D.progress = clamp01(ambitionProgress(sim, e, m));
+    if (D.progress >= 1.0f) {
+        D.ambitionLevel++;
+        D.happiness = std::min(1.0f, D.happiness + 0.3f);
+        D.ambitionTick = sim.tick;
+        m.think("Đã đạt ước mơ: %s!", ambitionName(D.ambition));
+        m.emotion = Emotion::Pride;
+        say(sim, e, {Meaning::I, Meaning::Happy, Meaning::Good}, NullEntity, 0);
+        const Social& so = sim.reg.get<Social>(e);
+        // Biên niên sử chỉ ghi những người đạt ước mơ lần thứ ba (thành huyền thoại) — tránh quá tải
+        if (D.ambitionLevel == 3 && sim.species[b.species].dexterous && (D.ambition == Ambition::Power || D.ambition == Ambition::Inventor ||
+                                    D.ambition == Ambition::Scholar || D.ambition == Ambition::Warrior || D.ambition == Ambition::Wealth)) {
+            const Transform& tr = sim.reg.get<Transform>(e);
+            const Group* g = so.group >= 0 ? &sim.groups[so.group] : nullptr;
+            sim.chronicle.add(sim.tick, EventKind::Society,
+                              so.name + (g ? " (" + g->displayName() + ")" : std::string()) + " thành huyền thoại: \"" + ambitionName(D.ambition) + "\"",
+                              tileX(tr.pos), tileY(tr.pos));
+        }
+        D.progress = 0;
+    } else if (sim.tick - D.ambitionTick > kTicksPerYear * 15 && D.progress < 0.2f && m.rng.chance(0.3f)) {
+        // Mãi không tiến triển → từ bỏ, tìm ước mơ khác
+        Ambition old = D.ambition;
+        D.ambition = chooseAmbition(sim, e, m);
+        D.ambitionTick = sim.tick;
+        D.happiness = std::max(0.0f, D.happiness - 0.15f);
+        if (old != D.ambition) m.think("Từ bỏ giấc mơ \"%s\", giờ muốn: %s", ambitionName(old), ambitionName(D.ambition));
+    }
+    // Hạnh phúc: nhu cầu được thoả mãn + tiến gần ước mơ (bậc thấp nặng ký hơn)
+    static const float kW[kNeedCount] = {1.4f, 0.8f, 0.9f, 1.2f, 0.7f, 0.6f, 0.4f, 0.3f};
+    float lack = 0, tw = 0;
+    for (int i = 0; i < kNeedCount; ++i) { lack += D.need[i] * kW[i]; tw += kW[i]; }
+    float target = clamp01(1.0f - lack / tw * 1.3f + D.progress * 0.2f + std::min(2, D.ambitionLevel) * 0.08f);
+    D.happiness += (target - D.happiness) * 0.15f;
+}
+
+// Mạng neuron học: thưởng = nhu cầu giảm + hạnh phúc tăng + thành công (phạt khi thất bại).
+void learnFromGoal(Simulation& sim, Mind& m, bool success) {
+    float needs = 0;
+    for (float v : m.drives.need) needs += v;
+    float reward = (m.nnStartNeeds - needs) * 0.35f + (m.drives.happiness - m.nnStartHappy) * 1.5f + (success ? 0.15f : -0.25f);
+    reward = std::clamp(reward, -0.6f, 0.6f);
+    float lr = 0.04f * sim.cfg.learningRate * (0.5f + m.intellect);
+    m.nn.reinforce(m.nnDecisionIn, static_cast<int>(m.goal), reward, lr);
+}
+
 void onActionResult(Simulation& sim, Entity e, Mind& m, ActionId a, bool success) {
     ActionStat& st = m.stats[static_cast<int>(a)];
     if (success) { if (st.success < 60000) st.success++; }
@@ -1445,6 +2129,10 @@ void onActionResult(Simulation& sim, Entity e, Mind& m, ActionId a, bool success
 void thinkStep(Mind& m) {
     const char* g = goalName(m.goal);
     const char* a = actionDef(m.plan.current()).name;
+    if ((m.goal == GoalId::Idle || m.goal == GoalId::Explore) && m.drives.ambition > Ambition::Survive && m.rng.chance(0.3f)) {
+        m.think("%s — mơ ước: %s (%.0f%%)", a, ambitionName(m.drives.ambition), m.drives.progress * 100);
+        return;
+    }
     if (std::strcmp(g, a) == 0) m.think("%s", g);
     else m.think("%s: %s", g, a);
 }
@@ -1472,6 +2160,13 @@ void Brain::initMind(Simulation& sim, Entity e, Mind& m, const Genome& g, Entity
         m.pers.diligence = clamp01(lerp(m.pers.diligence, pm->pers.diligence, 0.3f)); // học theo nếp nhà
         inheritKnowhow(sim, e, parent);   // khái niệm, vật liệu, thiết kế, quy trình của cha mẹ
     }
+    // Bộ não neuron: thừa hưởng trung bình của bố mẹ + đột biến (tiến hoá thần kinh); không có thì ngẫu nhiên
+    {
+        Mind* ma = sim.reg.tryGet<Mind>(mother);
+        Mind* fa = sim.reg.tryGet<Mind>(father);
+        if (ma || fa) m.nn.inherit(ma ? &ma->nn : nullptr, fa ? &fa->nn : nullptr, m.rng, 0.04f * sim.cfg.mutationRate);
+        else m.nn.randomize(m.rng);
+    }
     // Loài có tay khéo nào cũng biết sẵn những thứ cầm nắm hằng ngày (gỗ, đá, sợi cây)
     if (sim.species[sim.reg.get<Body>(e).species].dexterous) {
         m.know.learnMat(mat::Wood);
@@ -1490,7 +2185,8 @@ void Brain::updateIntellect(Simulation& sim, Entity e) {
     float maturity = clamp01(0.5f + 0.5f * b.ageTicks / std::max(1.0f, adultTicks));
     float culture = 0;
     if (so.group >= 0) culture = std::min(0.12f, sim.groups[so.group].knowledge.count() * 0.008f);
-    m.intellect = clamp01(g[Gene::Intelligence] * maturity + m.learned + culture);
+    m.rawIntellect = std::max(0.0f, g[Gene::Intelligence] * maturity + m.learned + culture);
+    m.intellect = clamp01(m.rawIntellect);
     m.ltm.capacity = 8 + static_cast<int>(m.intellect * 36);
 }
 
@@ -1569,7 +2265,8 @@ void Brain::think(Simulation& sim, Entity e) {
 
     // 1) QUAN SÁT
     perceive(sim, e, m, tr, body, so);
-    // 2) SUY NGHĨ: chấm điểm mục tiêu
+    // 2) SUY NGHĨ: cập nhật nhu cầu, rồi chấm điểm mục tiêu
+    updateNeeds(sim, e, m, body, so);
     scoreGoals(sim, e, m, body, inv, so);
     GoalId best = GoalId::Idle;
     float bestS = -1;
@@ -1597,6 +2294,12 @@ void Brain::think(Simulation& sim, Entity e) {
         chosen = alt;
     }
     m.goal = chosen;
+    // Ghi lại "ảnh chụp" đầu vào của mạng neuron lúc quyết định → để học khi mục tiêu kết thúc
+    m.nnDecisionIn = m.nn.in;
+    m.nnStartHappy = m.drives.happiness;
+    m.nnStartNeeds = 0;
+    for (float v : m.drives.need) m.nnStartNeeds += v;
+    m.nnGoalTick = sim.tick;
     m.goalScore = m.scores[static_cast<int>(chosen)];
     m.plan = plan;
     m.actionTicks = 0;
@@ -1642,6 +2345,21 @@ void Brain::act(Simulation& sim, Entity e) {
         }
     }
 
+    // Nhu cầu & tham vọng (pha tuần tự vì có thể ghi biên niên sử)
+    if ((sim.tick + entityIndex(e)) % 60 == 0) updateAmbition(sim, e, m);
+    // Tự chữa thương bằng thảo dược: lần đầu là tình cờ thấy đỡ đau → hiểu ra dược học
+    if (sim.species[body.species].dexterous && body.hp < body.maxHp * 0.7f && (sim.tick + entityIndex(e)) % 40 == 0) {
+        Group* hg = sim.group(so.group);
+        bool have = inv.count(mat::Herb) > 0 || (hg && hg->matCount(mat::Herb) > 0 && dist2(tr.pos, homePos(*hg)) < 16);
+        if (have) {
+            if (inv.take(mat::Herb, 1) == 0 && hg) hg->takeMat(mat::Herb, 1);
+            bool med = m.know.concepts.test(static_cast<int>(Concept::Medicine));
+            body.hp = std::min(body.maxHp, body.hp + body.maxHp * (med ? 0.35f : 0.08f));
+            if (!med) experience(sim, e, Concept::Medicine, 0.25f);
+            else m.think("Đắp thảo dược chữa vết thương");
+        }
+    }
+
     if (m.plan.done()) { m.needReplan = true; return; }
     Ctx c{sim, e, m, tr, body, inv, so, sim.species[body.species], so.group >= 0 ? sim.group(so.group) : nullptr};
     ActionId a = m.plan.current();
@@ -1654,9 +2372,10 @@ void Brain::act(Simulation& sim, Entity e) {
     tr.stuck = 0;
     if (r == Res::Done) {
         m.plan.idx++;
-        if (m.plan.done()) { m.needReplan = true; m.nextThink = std::min(m.nextThink, sim.tick + 1); }
+        if (m.plan.done()) { learnFromGoal(sim, m, true); m.needReplan = true; m.nextThink = std::min(m.nextThink, sim.tick + 1); }
         else thinkStep(m);
     } else {
+        learnFromGoal(sim, m, false);
         m.think("%s: thất bại khi \"%s\", suy nghĩ lại...", goalName(m.goal), actionDef(a).name);
         m.plan.clear();
         m.needReplan = true;

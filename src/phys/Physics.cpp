@@ -54,6 +54,11 @@ void PhysicsWorld::step(Simulation& sim) {
                     const Body* eb = sim.reg.pool<Body>().tryGet(e);
                     if (eb && !eb->dead) hit = e;
                 });
+                if (hit != NullEntity && b.blast > 0) {
+                    w.matter.explode(tx, ty, b.blast, sim.tick);   // bom trúng người → nổ tung
+                    b.alive = false;
+                    continue;
+                }
                 if (hit != NullEntity) {
                     // Động năng ½mv² → sát thương; vật sắc (mũi tên) xuyên tốt hơn vật tù
                     float ke = 0.5f * b.mass * speed * speed;
@@ -94,6 +99,11 @@ void PhysicsWorld::step(Simulation& sim) {
         }
 
         // ---- Chạm mặt đất / mặt nước ----
+        if (b.z <= 0 && b.blast > 0 && !w.isWater(tx, ty)) {
+            w.matter.explode(tx, ty, b.blast, sim.tick);
+            b.alive = false;
+            continue;
+        }
         if (b.z <= 0) {
             b.z = 0;
             if (w.isWater(tx, ty)) {

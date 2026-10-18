@@ -194,7 +194,8 @@ void SocietySystem::chooseLeader(Group& g) {
 
 void SocietySystem::recountBuildings(Group& g) {
     g.dwellings = g.housing = g.buildingsTotal = 0;
-    g.hasGranary = g.hasWorkshop = g.hasForge = g.hasTemple = g.hasTownHall = false;
+    g.hasGranary = g.hasWorkshop = g.hasForge = g.hasTemple = g.hasTownHall = g.hasLibrary = false;
+    g.mines = 0;
     int oldHx = g.hearthX, oldHy = g.hearthY, oldFx = g.forgeX, oldFy = g.forgeY;
     g.hasHearth = false;
     g.hearthX = g.hearthY = g.forgeX = g.forgeY = -1;
@@ -214,6 +215,8 @@ void SocietySystem::recountBuildings(Group& g) {
             case Building::Hearth: g.hasHearth = true; g.hearthX = x; g.hearthY = y; break;
             case Building::Temple: case Building::Totem: g.hasTemple = true; break;
             case Building::TownHall: case Building::Castle: g.hasTownHall = true; break;
+            case Building::Library: g.hasLibrary = true; break;
+            case Building::Mine: if (t.deep > 0) g.mines++; break;
             default: break;
             }
         }
@@ -223,6 +226,7 @@ void SocietySystem::recountBuildings(Group& g) {
     if (oldFx >= 0 && (oldFx != g.forgeX || oldFy != g.forgeY)) G.clearHeatSource(oldFx, oldFy);
     if (g.hasHearth) {
         if (g.wood > 0) { g.wood--; G.setHeatSource(g.hearthX, g.hearthY, 750, g.id); }
+        else if (g.takeMat(mat::Coal, 1) > 0) G.setHeatSource(g.hearthX, g.hearthY, 800, g.id);   // than đá từ hầm mỏ
         else G.clearHeatSource(g.hearthX, g.hearthY);   // hết củi → tắt lửa
     }
     if (g.forgeX >= 0) {
@@ -235,6 +239,7 @@ void SocietySystem::recountBuildings(Group& g) {
         // Chỉ đốt than khi còn dư — giữ lại một ít làm chất khử cho luyện kim.
         if (sim_.tick >= g.forgeLitUntil) heat = 0;
         else if (g.matCount(mat::Charcoal) > 8 && g.takeMat(mat::Charcoal, 1) > 0) heat += 150;
+        else if (g.matCount(mat::Coal) > 4 && g.takeMat(mat::Coal, 1) > 0) heat += 150;   // than đá cháy nóng như than củi
         else if (g.wood >= 2) g.wood -= 2;
         else heat = 0;
         if (heat > 0) G.setHeatSource(g.forgeX, g.forgeY, heat, g.id);
@@ -279,6 +284,18 @@ void SocietySystem::aggregateKnowhow(Group& g) {
     for (int p = 0; p < kPurposeCount; ++p)
         if (best[p] >= 0) tl += std::log2(1.0f + sim_.designs[best[p]].value(static_cast<Purpose>(p)) * (p == static_cast<int>(Purpose::Heat) ? 0.01f : 1.0f)) * 2.0f;
     tl += mats.size() * 0.3f + procs.size() * 0.8f + cs.count() * 0.5f;
+    // Trình độ từng ngành khoa học: khái niệm đã hiểu + kinh nghiệm nghiên cứu/thực hành của thành viên
+    std::array<float, kScienceCount> sci{};
+    for (int c = 0; c < kConceptCount; ++c) if (cs.test(c)) sci[static_cast<int>(conceptField(static_cast<Concept>(c)))] += 2.0f;
+    sci[static_cast<int>(Science::Chemistry)] += procs.size() * 0.6f;
+    for (MatId m : mats) if (R[m].smeltsTo != kNoMat || m == mat::Coal || m == mat::Gem) sci[static_cast<int>(Science::Geology)] += 0.4f;
+    for (Entity e : g.members) {
+        const Knowhow& K = sim_.reg.get<Mind>(e).know;
+        for (int f = 0; f < kScienceCount; ++f) sci[f] += std::min<float>(K.studies[f], 40) * 0.02f;
+    }
+    if (g.hasLibrary) for (float& v : sci) v *= 1.15f;
+    g.science = sci;
+    for (float v : sci) tl += v * 0.25f;
     g.techLevel = tl;
     // Thời đại = vật liệu "tiên tiến" nhất đang làm công cụ chính
     MatId eraMat = kNoMat;
@@ -353,7 +370,7 @@ void SocietySystem::assignRoles(Group& g) {
         auto score = [&](Entity e) { const Mind& m = sim_.reg.get<Mind>(e); return (1 - m.pers.agreeableness) + sim_.reg.get<Body>(e).damage * 0.05f; };
         return score(a) > score(b);
     });
-    int soldiers = 0, builders = 0, farmers = 0, priests = 0, hunters = 0;
+    int soldiers = 0, builders = 0, farmers = 0, priests = 0, hunters = 0, scholars = 0, miners = 0;
     if (sd.dexterous) {
         float sf = 0.05f + g.culture.militarism * 0.15f + (g.atWar() ? 0.25f : 0.f) + (g.laws.test(static_cast<int>(Law::Conscription)) ? 0.1f : 0.f);
         soldiers = g.stage >= Stage::Tribe ? static_cast<int>(n * sf) : 0;
@@ -361,6 +378,9 @@ void SocietySystem::assignRoles(Group& g) {
         farmers = knows(g, Tech::Farming) ? static_cast<int>(n * 0.3f) : 0;
         priests = knows(g, Tech::Religion) ? std::min(2, n / 8 + 1) : 0;
         hunters = static_cast<int>(n * 0.15f);
+        // Học giả: nhóm có chữ viết hoặc thư viện nuôi vài người chuyên tìm hiểu tự nhiên
+        if (knows(g, Tech::Writing) || g.hasLibrary || g.avgIntellect > 0.5f) scholars = std::max(1, n / 10);
+        miners = g.mines > 0 ? std::min(g.mines * 2, std::max(1, n / 8)) : 0;
     } else {
         hunters = n; // bầy thú: mọi con trưởng thành đều đi săn
     }
@@ -374,6 +394,14 @@ void SocietySystem::assignRoles(Group& g) {
     give(Role::Builder, builders);
     give(Role::Farmer, farmers);
     give(Role::Priest, priests);
+    // Học giả: người tò mò + thông minh nhất trong số còn lại
+    std::sort(adults.begin() + i, adults.end(), [&](Entity a, Entity b) {
+        auto sc = [&](Entity e) { const Mind& m = sim_.reg.get<Mind>(e); return m.pers.openness + m.intellect * 1.5f +
+                                  (m.drives.ambition == Ambition::Scholar || m.drives.ambition == Ambition::Inventor ? 0.5f : 0.f); };
+        return sc(a) > sc(b);
+    });
+    give(Role::Scholar, scholars);
+    give(Role::Miner, miners);
     give(Role::Hunter, hunters);
     give(Role::Gatherer, n);
     // Người già nhất (không phải thủ lĩnh) làm trưởng lão

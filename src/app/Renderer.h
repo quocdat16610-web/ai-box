@@ -21,9 +21,9 @@ constexpr int kTilePx = 4;        // pixel trên texture cho mỗi ô
 constexpr float kTileWorld = 8.f; // đơn vị thế giới (camera) cho mỗi ô
 
 // Lớp hiển thị debug vật lý/hoá học
-enum class Layer : uint8_t { Normal, Heat, Gas, Reactions, Count };
+enum class Layer : uint8_t { Normal, Heat, Gas, Reactions, Underground, Count };
 inline const char* layerName(Layer l) {
-    static const char* n[] = {"Thường", "Nhiệt độ", "Khí & áp suất", "Phản ứng"};
+    static const char* n[] = {"Thường", "Nhiệt độ", "Khí & áp suất", "Phản ứng", "Lòng đất"};
     return n[static_cast<int>(l)];
 }
 
@@ -32,6 +32,7 @@ struct RenderOptions {
     Layer layer = Layer::Normal;  // lớp debug vật lý/hoá học
     bool showTerritory = true;
     bool showLabels = true;
+    bool translate = true;        // trình thông dịch: hiện nghĩa tiếng Việt dưới lời nói
     Entity selected = NullEntity;
     int selectedGroup = -1;
 };

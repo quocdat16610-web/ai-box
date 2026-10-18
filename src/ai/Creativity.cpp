@@ -35,6 +35,7 @@ Concept conceptForPurpose(Purpose p) {
     case Purpose::Float: return Concept::Buoyancy;
     case Purpose::Heat: case Purpose::Warmth: return Concept::Insulation;
     case Purpose::FireStart: return Concept::Friction;
+    case Purpose::Blast: return Concept::Pressure;
     default: return Concept::Leverage;
     }
 }
@@ -138,7 +139,18 @@ void experience(Simulation& sim, Entity e, Concept c, float chance) {
     if (m->intellect < 0.25f) return;  // sinh vật bản năng không trừu tượng hoá được
     if (!m->rng.chance(chance * (0.3f + m->intellect) * sim.cfg.learningRate)) return;
     m->know.concepts.set(static_cast<int>(c));
-    m->think("Ồ! Hiểu ra: %s", conceptName(c));
+    m->think("Ồ! Hiểu ra: %s (%s)", conceptName(c), scienceName(conceptField(c)));
+    // Lần đầu tiên trên thế giới có ai hiểu ra khái niệm này → ghi vào biên niên sử
+    if (!sim.conceptFirsts.test(static_cast<int>(c))) {
+        sim.conceptFirsts.set(static_cast<int>(c));
+        const Social& so = sim.reg.get<Social>(e);
+        const Transform& tr = sim.reg.get<Transform>(e);
+        Group* g = sim.group(so.group);
+        sim.chronicle.add(sim.tick, EventKind::Discovery,
+                          std::string("Khoa học (") + scienceName(conceptField(c)) + "): " + so.name +
+                              (g ? " (" + g->displayName() + ")" : std::string()) + " lần đầu hiểu ra \"" + conceptName(c) + "\"",
+                          static_cast<int>(tr.pos.x), static_cast<int>(tr.pos.y));
+    }
 }
 
 bool conceiveIdea(Simulation& sim, Entity e, Purpose p) {
@@ -376,6 +388,9 @@ void observeReaction(Simulation& sim, Entity e, const ReactionEvent& ev) {
     case ReactionKind::Smelting: experience(sim, e, Concept::Reduction, 0.4f); break;
     case ReactionKind::Alloying: experience(sim, e, Concept::Alloying, 0.5f); break;
     case ReactionKind::Explosion: case ReactionKind::Boiling: experience(sim, e, Concept::Pressure, 0.35f); break;
+    case ReactionKind::Neutralization: case ReactionKind::AcidMetal: experience(sim, e, Concept::AcidBase, 0.4f); break;
+    case ReactionKind::Decay: experience(sim, e, Concept::Contagion, 0.01f); break;   // xác thối bốc mùi, ruồi nhặng
+    case ReactionKind::Precipitation: experience(sim, e, Concept::Preservation, 0.05f); break;   // muối kết tinh
     default: break;
     }
     // 2) Vật liệu mới thấy (sản phẩm) → biết đến sự tồn tại của nó
@@ -406,11 +421,11 @@ void observePhysEvent(Simulation& sim, Entity e, int kind, MatId m) {
     case PhysEventKind::Float: experience(sim, e, Concept::Buoyancy, 0.35f);
         if (Mind* mm = sim.reg.tryGet<Mind>(e)) mm->know.learnMat(m);
         break;
-    case PhysEventKind::Sink: experience(sim, e, Concept::Buoyancy, 0.1f); break;
-    case PhysEventKind::Roll: experience(sim, e, Concept::Rotation, 0.3f); break;
+    case PhysEventKind::Sink: experience(sim, e, Concept::Buoyancy, 0.1f); experience(sim, e, Concept::Gravity, 0.05f); break;
+    case PhysEventKind::Roll: experience(sim, e, Concept::Rotation, 0.3f); experience(sim, e, Concept::Gravity, 0.05f); break;
     case PhysEventKind::Blast: experience(sim, e, Concept::Pressure, 0.4f); break;
     case PhysEventKind::Bounce: experience(sim, e, Concept::Elasticity, 0.15f); break;
-    case PhysEventKind::Impact: experience(sim, e, Concept::Sharpness, 0.05f); break;
+    case PhysEventKind::Impact: experience(sim, e, Concept::Sharpness, 0.05f); experience(sim, e, Concept::Gravity, 0.1f); break;
     default: break;
     }
 }

@@ -142,7 +142,15 @@ void applyPower(Simulation& sim, Power p, int x, int y, int r, int speciesId) {
     }
     case Power::Plague:
         sim.grid.query({x + 0.5f, y + 0.5f}, static_cast<float>(r + 10), [&](Entity e, Vec2) {
-            if (Body* b = sim.reg.tryGet<Body>(e)) { b->hp *= 0.4f; b->hunger = std::min(1.0f, b->hunger + 0.3f); if (sim.rng.chance(0.25f)) sim.kill(e, 3); }
+            Body* b = sim.reg.tryGet<Body>(e);
+            if (!b || b->dead) return;
+            // Hiểu sự lây nhiễm (vệ sinh, cách ly người bệnh) → bớt chết vì dịch; người sống sót rút ra bài học
+            Mind* m = sim.reg.tryGet<Mind>(e);
+            bool aware = m && m->know.concepts.test(static_cast<int>(Concept::Contagion));
+            b->hp *= aware ? 0.7f : 0.4f;
+            b->hunger = std::min(1.0f, b->hunger + 0.3f);
+            if (sim.rng.chance(aware ? 0.08f : 0.25f)) { sim.kill(e, 3); return; }
+            experience(sim, e, Concept::Contagion, 0.3f);
         });
         witness(sim, x, y, r + 10);
         sim.chronicle.add(sim.tick, EventKind::Disaster, "Dịch bệnh bùng phát", x, y);

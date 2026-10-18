@@ -11,6 +11,7 @@
 #pragma once
 #include "raylib.h"
 #include "Renderer.h"
+#include "Voice.h"
 #include "../sim/GodPowers.h"
 #include "../sim/Scenarios.h"
 #include "../sim/Simulation.h"
@@ -52,6 +53,14 @@ struct App {
     Vector2 pinchLastMid{};
     bool pinching = false;
     float lastApply = 0;
+
+    // Giọng nói của sinh vật (âm thanh tổng hợp) + trình thông dịch
+    VoiceSystem voice;
+    bool hearVoices = true;       // phát âm thanh lời nói
+    long lastHeardTick = -1;      // câu cuối của sinh vật đang chọn đã phát
+    Entity lastHeardEntity = NullEntity;
+    double lastAmbientVoice = 0;
+    long lastAmbientTick = -1;
 };
 
 void appInit(App& app);

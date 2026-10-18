@@ -49,7 +49,9 @@ struct ShortTermMemory {
 // ---------------- Trí nhớ dài hạn ----------------
 enum class FactType : uint8_t {
     FoodSource, WaterSource, WoodSource, StoneSource, OreSource, Danger,
-    HuntingGround, Home, FireSeen, OldTool, EnemyGroup, Count
+    HuntingGround, Home, FireSeen, OldTool, EnemyGroup,
+    DeepOre,   // mạch khoáng dưới lòng đất đã thăm dò được (subject = loại khoáng)
+    Count
 };
 
 struct Fact {

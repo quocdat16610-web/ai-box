@@ -35,7 +35,14 @@ struct Tile {
     uint8_t itemFlag = 0; // có vật phẩm trên ô (giúp quan sát nhanh, không phải duyệt danh sách)
     int16_t owner = -1;   // id nhóm (bộ tộc / quốc gia) sở hữu lãnh thổ, -1 = vô chủ
     float height = 0.5f;  // độ cao 0..1
+    // ---- Lòng đất: mạch khoáng ẩn (không nhìn thấy từ mặt đất) ----
+    // Chỉ biết được bằng hiểu biết địa chất (khái niệm Địa tầng), đào thăm dò, hoặc tình cờ khi đào hầm.
+    MatId deepMat = kNoMat;  // loại khoáng sản: than đá, đồng, thiếc, sắt, bạc, vàng, đá quý, khoáng lạ…
+    uint8_t deep = 0;        // trữ lượng còn lại
+    uint8_t deepLevel = 0;   // độ sâu mạch: 1 nông · 2 vừa · 3 sâu (càng sâu càng cần dụng cụ đào tốt)
+    uint8_t mineDepth = 0;   // độ sâu hầm đã đào được (0..deepLevel*kMineStep)
 };
+constexpr int kMineStep = 60;   // "khối lượng đào" để xuống thêm một tầng địa chất
 
 struct GroundItem {
     int x, y;
@@ -101,6 +108,13 @@ public:
     void clearDirty();
     bool fullRedraw = true;
 
+    // Tên độ sâu tầng địa chất.
+    static const char* depthName(int level) {
+        static const char* n[] = {"mặt đất", "tầng nông", "tầng giữa", "tầng sâu"};
+        return n[std::clamp(level, 0, 3)];
+    }
+    int deepDeposits() const { return deepDeposits_; }
+
     // Thống kê ô đang cháy để AI quan sát "lửa".
     int burningCount() const { return matter.burningCount(); }
 
@@ -116,6 +130,7 @@ private:
     std::vector<uint8_t> dirtyFlag_;
     std::vector<int> dirty_;
     Weather weather_;
+    int deepDeposits_ = 0;
 };
 
 } // namespace wb

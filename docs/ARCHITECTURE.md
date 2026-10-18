@@ -263,6 +263,50 @@ và để **sinh vật quan sát mà học** (xem §7). `worldbox_sim --chemtest
 * **GOAP**: 37 hành động (pre/effect/cost); ví dụ `Lùng sục con mồi → Săn mồi → Ăn` hay
   `Đào quặng → Nộp quặng vào kho`, `Sáng tạo thiết kế mới` (bên trong tự đi kiếm vật liệu).
 * **Phản xạ**: bị bỏng → nghĩ lại ngay lập tức; né ô quá nóng; khi bị lửa vây thì chỉ đi về phía mát hơn.
+* **GOAP chỉ xét hành động liên quan**: trước khi chạy A*, lan ngược từ mục tiêu qua tiền điều kiện để lọc ra những
+  hành động có thể góp phần (vd. mục tiêu *Xây dựng* chỉ còn `Gom vật liệu → Xây`). Không lọc thì A* tiêu hết ngân
+  sách 300 nút vào các tổ hợp hành động rẻ vô ích và không bao giờ lập được kế hoạch xây nhà.
+
+### 6.1 Mạng neuron (`src/ai/Neural.h`)
+
+```
+ 20 đầu vào ─────────► 16 neuron ẩn (tanh) ─────────► 20 đầu ra (tanh) = trực giác cho từng mục tiêu
+ 8 nhu cầu, đe doạ, máu, đồng loại, có nhóm, trưởng thành, trí tuệ, 4 nét tính cách, đồ ăn mang theo, hạnh phúc
+```
+
+* Đầu ra cộng vào điểm Utility của các mục tiêu khả thi (trọng số tăng theo trí tuệ).
+* **Học trong đời**: lúc chọn mục tiêu, ghi lại đầu vào; khi kế hoạch xong/thất bại → phần thưởng = nhu cầu giảm +
+  hạnh phúc tăng ± thành công → lan truyền ngược một bước cho đầu ra của mục tiêu đó.
+* **Tiến hoá thần kinh**: con sinh ra mang trung bình trọng số của bố mẹ + đột biến Gauss → chọn lọc tự nhiên.
+
+### 6.2 Nhu cầu, tham vọng, IQ (`src/ai/Drives.h`, `Mind::iq()`)
+
+* 8 nhu cầu (0 = thoả mãn … 1 = thiếu thốn) tính lại mỗi nhịp suy nghĩ; nhu cầu thiếu đẩy điểm mục tiêu tương ứng.
+* Tham vọng chọn lúc trưởng thành theo tính cách/vai trò (roulette có trọng số); tiến độ đo bằng thành tựu thật
+  (số con, số phát minh, số khái niệm, công trình đã xây, kẻ địch đã hạ, vàng bạc giữ riêng…); đạt → mơ lớn hơn,
+  15 năm không tiến triển → từ bỏ. Hạnh phúc = nhu cầu được thoả + tiến gần ước mơ.
+* IQ = 30 + 130 × trí tuệ thô (gen × độ trưởng thành + học được + văn hoá, KHÔNG chặn trần) → người ≈ 100, cá thể
+  xuất chúng có thể vượt 160.
+
+### 6.3 Cảm xúc, ngôn ngữ, giọng nói (`src/ai/Speech.h`, `src/app/Voice.cpp`)
+
+* Cảm xúc nảy sinh từ trạng thái thật: sợ, giận, vui, buồn, trìu mến, tò mò, tự hào, bình thản.
+* Câu nói = chuỗi **ý nghĩa** (38 ý: tôi, thức ăn, nguy hiểm, lại đây, quặng, xây, dạy, thần linh…). Từ vựng sinh từ
+  bộ âm vị của ngôn ngữ nhóm (không trùng âm), trật tự từ SVO/SOV theo từng ngôn ngữ; nhóm tách ra → ngôn ngữ trôi
+  dạt → từ cùng gốc. Chưa có tập quán *Ngôn ngữ* → tiền ngôn ngữ 2 từ lặp âm; thú vật → tiếng kêu.
+* **Giọng nói**: tổng hợp nguồn–bộ lọc: xung dây thanh qua 3 bộ cộng hưởng formant (mỗi nguyên âm a/e/i/o/u/ă/ô/ư/ê
+  một cặp F1–F2), phụ âm bật/xát/mũi/lướt, ngữ điệu hạ dần; cao độ theo kích thước loài, giới tính, tuổi; cảm xúc đổi
+  tốc độ, độ cao, độ khàn, run giọng. Sinh vật đang chọn nói câu mới → phát ngay; phóng to → nghe tiếng xì xào xung
+  quanh (âm lượng theo khoảng cách). **Thông dịch** hiện nghĩa tiếng Việt dưới bong bóng thoại.
+
+### 6.4 Lòng đất & khoa học (`World::generate`, `mineTile`, `ActionId::Study`)
+
+* Mỗi ô có thể có một mạch khoáng ẩn ở tầng nông/giữa/sâu. Người hiểu **Địa tầng** đọc dấu hiệu bề mặt (đồi núi lộ
+  vỉa, trí tuệ cao đoán được tầng sâu); hố thăm dò cho thấy trực tiếp.
+* Hầm mỏ: đào xuyên từng tầng (60 "khối lượng đào"/tầng, cần sức đào ≥ 0.8 + 1.1 × tầng), ra đá trước rồi mới tới
+  quặng; rủi ro sập hầm giảm khi nhóm hiểu đòn bẩy + áp suất (chống lò); vỉa than sâu rỉ mê-tan; nổ mìn đào nhanh.
+* Nghiên cứu: chọn khái niệm chưa hiểu mà quan sát được quanh đó, tới nơi, làm thí nghiệm thật (ném đá → sự kiện vật
+  lý thật mọi người xung quanh đều thấy), xác suất hiểu ra theo trí tuệ × độ khó khái niệm × học giả/thư viện/chữ viết.
 
 ---
 
