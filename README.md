@@ -64,6 +64,19 @@ Chạy mô phỏng không đồ hoạ (in biên niên sử):
 ctest --test-dir build --output-on-failure             # kiểm thử kịch bản
 ```
 
+### Windows
+
+* **Không cần build**: vào tab *Actions* của repo → lần chạy mới nhất → tải artifact **worldbox-windows** →
+  giải nén → chạy `worldbox.exe` (bấm "More info → Run anyway" nếu SmartScreen hỏi).
+* **Tự build**: cài *Visual Studio 2022* (workload "Desktop development with C++"), *CMake* và *Git*, rồi:
+
+```bat
+cmake -S . -B build
+cmake --build build --config Release
+build\Release\worldbox.exe
+build\Release\worldbox_sim.exe --scenario twins --years 120 --seed 21
+```
+
 ### Android APK
 
 ```bash
