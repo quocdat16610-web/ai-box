@@ -20,6 +20,10 @@ if (MSVC)
     add_compile_options(/utf-8 /bigobj /MP)
     add_compile_definitions(NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
+# Liên kết tĩnh CRT trên MSVC → worldbox.exe chạy ngay, không cần cài VC++ Redistributable.
+# Đặt cả policy mặc định để raylib (FetchContent) dùng cùng runtime, tránh lỗi LNK2038.
+set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 option(WB_BUILD_GAME "Build bản có đồ hoạ (raylib)" ON)
 option(WB_BUILD_HEADLESS "Build trình chạy headless" ON)

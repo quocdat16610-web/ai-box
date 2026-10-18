@@ -1,6 +1,7 @@
 # =============================================================================
 # CI: build + test bản PC (Linux) và build file APK Android.
-# APK được đính kèm ở mục "Artifacts" của mỗi lần chạy workflow.
+# APK được đính kèm ở mục "Artifacts" của mỗi lần chạy workflow; mỗi lần push còn
+# cập nhật bản phát hành "latest" (GitHub Releases) với link tải trực tiếp .exe/.apk.
 # =============================================================================
 name: Build
 
@@ -71,3 +72,31 @@ jobs:
         with:
           name: worldbox-android-apk
           path: android/app/build/outputs/apk/release/*.apk
+
+  release:
+    name: Phát hành bản tải về (GitHub Releases)
+    needs: [desktop, windows, android]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Tạo/cập nhật bản phát hành "latest"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out
+          cp "$(find dist/worldbox-windows -name worldbox.exe)" out/WorldBoxAI-windows.exe
+          cp "$(find dist/worldbox-android-apk -name '*.apk' | head -n1)" out/WorldBoxAI-android.apk
+          cat > notes.md <<NOTES
+          Build tự động từ commit ${GITHUB_SHA::7} (nhánh ${GITHUB_REF_NAME}).
+
+          * **WorldBoxAI-windows.exe** — Windows 10/11 64-bit, chạy trực tiếp, không cần cài.
+          * **WorldBoxAI-android.apk** — Android 7.0+; cho phép "Cài ứng dụng không rõ nguồn gốc" rồi mở file để cài.
+          NOTES
+          gh release delete latest --yes --cleanup-tag -R "$GITHUB_REPOSITORY" || true
+          gh release create latest out/* -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "WorldBox AI — bản mới nhất" --notes-file notes.md

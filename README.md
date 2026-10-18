@@ -42,6 +42,15 @@ và quan sát chúng **tự suy nghĩ, học hỏi, tiến hoá** thành bộ t�
 * **Cảm ứng**: chạm, kéo, chụm 2 ngón để zoom; nút to, giao diện co giãn theo màn hình (dọc & ngang).
 * **Tiếng Việt có dấu** (font hệ thống; tự bỏ dấu nếu thiết bị không có font phù hợp).
 
+## Tải về (không cần build)
+
+Mỗi lần push, CI tự build và cập nhật bản phát hành **latest**:
+
+* 🪟 **Windows**: [WorldBoxAI-windows.exe](https://github.com/quocdat16610-web/ai-box/releases/download/latest/WorldBoxAI-windows.exe) — tải về, nhấp đúp để chơi.
+* 🤖 **Android**: [WorldBoxAI-android.apk](https://github.com/quocdat16610-web/ai-box/releases/download/latest/WorldBoxAI-android.apk) — mở file trên điện thoại, cho phép "cài ứng dụng không rõ nguồn gốc".
+
+Xem tất cả bản phát hành: <https://github.com/quocdat16610-web/ai-box/releases>
+
 ## Bắt đầu nhanh
 
 ```bash
