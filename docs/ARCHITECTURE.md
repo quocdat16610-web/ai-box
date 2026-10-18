@@ -1,8 +1,16 @@
 # Kiến trúc WorldBox AI
 
-Tài liệu này giải thích **thiết kế tổng thể**, **lựa chọn công nghệ**, và **từng hệ thống** của game:
-thế giới, ECS, AI cá nhân (Utility + GOAP + trí nhớ), tiến hoá sinh học & văn hoá, hình thành
-bộ tộc → làng → quốc gia, cùng cách build cho PC và Android (APK).
+Tài liệu này giải thích **thiết kế tổng thể**, **lựa chọn công nghệ** và **từng hệ thống** của game:
+thế giới, **vật lý & hoá học**, ECS, AI cá nhân (Utility + GOAP + trí nhớ + sáng tạo), **công nghệ mở không
+có tech tree**, tiến hoá sinh học & văn hoá, hình thành bộ tộc → làng → quốc gia, cách build cho PC và Android (APK).
+
+Mục lục: [1. Công nghệ](#1-lựa-chọn-công-nghệ) · [2. Sơ đồ hệ thống](#2-sơ-đồ-hệ-thống) ·
+[3. Sơ đồ lớp](#3-sơ-đồ-lớp-rút-gọn) · [4. Vật lý & hoá học](#4-hệ-thống-vật-lý--hoá-học) ·
+[5. ECS](#5-ecs-entity-component-system) · [6. AI cá nhân](#6-ai-cá-nhân-individual-agent-ai) ·
+[7. Công nghệ mở](#7-công-nghệ-mở--tiến-hoá-vô-hạn) · [8. Tiến hoá sinh học](#8-tiến-hoá-sinh-học--văn-hoá) ·
+[9. Văn minh](#9-nền-văn-minh-bầy--bộ-lạc--làng--thị-trấn--thành-phố--quốc-gia) ·
+[10. Ví dụ](#10-ví-dụ-cụ-thể) · [11. Debug trực quan](#11-debug-trực-quan) · [12. Hiệu năng](#12-hiệu-năng) ·
+[13. Build](#13-build) · [14. Mở rộng](#14-mở-rộng)
 
 ---
 
@@ -10,16 +18,15 @@ bộ tộc → làng → quốc gia, cùng cách build cho PC và Android (APK).
 
 | Hạng mục | Lựa chọn | Lý do |
 |---|---|---|
-| Ngôn ngữ | **C++17** | Hàng nghìn agent AI chạy song song → cần hiệu năng gốc, kiểm soát bộ nhớ. |
-| Đồ hoạ / input | **raylib 5.5** | Một API cho Windows/Linux/macOS **và Android** (OpenGL ES 2), nhẹ, dễ học, hỗ trợ cảm ứng đa điểm. |
+| Ngôn ngữ | **C++17** | Hàng nghìn agent AI + mô phỏng nhiệt/chất lỏng/khí/phản ứng mỗi tick → cần hiệu năng gốc. |
+| Đồ hoạ / input | **raylib 5.5** | Một API cho Windows/Linux/macOS **và Android** (OpenGL ES 2), cảm ứng đa điểm, nạp font TTF. |
 | Build | **CMake** (+ FetchContent tải raylib) | Cùng một `CMakeLists.txt` dùng cho PC và cho Gradle/NDK. |
-| Android | **Gradle + Android NDK + NativeActivity** | Không cần dòng Java nào: `libmain.so` được nạp trực tiếp, raylib cung cấp `android_main()`. |
+| Android | **Gradle + NDK + NativeActivity** | Không có dòng Java nào: `libmain.so` được nạp trực tiếp, raylib cung cấp `android_main()`. |
 | Đa luồng | `std::thread` (thread pool tự viết) | Không phụ thuộc thư viện ngoài; chạy tốt trên Android. |
-| Kiểm thử | Trình chạy **headless** + `ctest` | Lõi mô phỏng không phụ thuộc đồ hoạ → chạy CI, cân bằng game, benchmark. |
+| Kiểm thử | Trình chạy **headless** + `ctest` | Lõi mô phỏng không phụ thuộc đồ hoạ → CI, cân bằng game, kiểm thử hoá học. |
 
-Vì sao không SDL2? SDL2 cũng tốt, nhưng raylib đã gói sẵn: cửa sổ, font TTF, texture, camera 2D,
-gesture, Android glue — ít mã nền tảng hơn rất nhiều. Lõi mô phỏng (`wb_core`) hoàn toàn độc lập,
-nên đổi sang SDL2 chỉ cần viết lại thư mục `src/app/`.
+Vì sao không SDL2? SDL2 cũng tốt, nhưng raylib gói sẵn cửa sổ, font, texture, camera 2D, gesture và Android
+glue — ít mã nền tảng hơn nhiều. Lõi mô phỏng (`wb_core`) hoàn toàn độc lập; đổi sang SDL2 chỉ cần viết lại `src/app/`.
 
 ---
 
@@ -28,43 +35,49 @@ nên đổi sang SDL2 chỉ cần viết lại thư mục `src/app/`.
 ```mermaid
 flowchart TB
     subgraph APP["src/app — Trình bày (raylib)"]
-        UI["Ui: toolbar, panel debug, input cảm ứng"]
-        RD["Renderer: texture địa hình pixel art, sprite, nhãn"]
+        UI["Ui: toolbar cảm ứng, bảng debug AI / hoá học"]
+        RD["Renderer: pixel art, lớp nhiệt/khí/phản ứng, vật thể bay"]
         TX["Text: font tiếng Việt / bỏ dấu"]
     end
     subgraph CORE["wb_core — Lõi mô phỏng (không phụ thuộc đồ hoạ)"]
         SIM["Simulation: vòng lặp tick, sinh/tử, LOD"]
-        W["World: lưới ô, tài nguyên, lửa, mưa, mùa"]
+        subgraph PHYS["src/phys — Vật lý & hoá học"]
+            MAT["MaterialRegistry: vật liệu + hợp kim sinh động"]
+            MG["MatterGrid: nhiệt, chất lỏng, khí, áp suất"]
+            CH["Chemistry: 13 quy luật phản ứng tổng quát"]
+            PW["PhysicsWorld: vật thể 2.5D, trọng lực, va chạm, nổ"]
+        end
+        W["World: địa hình, tài nguyên, thời tiết, chu trình vật chất"]
         ECS["Registry (ECS sparse-set)"]
-        GRID["SpatialGrid"]
-        POOL["ThreadPool"]
         BR["Brain: quan sát → suy nghĩ → quyết định → hành động → học"]
         GO["GOAP Planner (A*)"]
-        KN["Knowledge: cây công nghệ tự khám phá"]
-        SOC["SocietySystem: nhóm, văn minh, ngoại giao, chiến tranh, loài mới"]
-        GP["GodPowers: quyền năng của Thần"]
-        SC["Scenarios: sói, người nguyên thuỷ, sandbox"]
+        INV["Invention + Creativity: khái niệm, thiết kế, quy trình (MỞ)"]
+        KN["Knowledge: tập quán xã hội"]
+        SOC["SocietySystem: nhóm, văn minh, ngoại giao, loài mới"]
+        GP["GodPowers"]
     end
-    HL["src/headless: worldbox_sim (CI/test)"]
-    UI --> SIM
-    UI --> GP
+    HL["src/headless: worldbox_sim (CI, --chemtest)"]
+    UI --> SIM & GP
     RD --> SIM
     HL --> SIM
-    SIM --> W & ECS & GRID & POOL & BR & SOC
-    BR --> GO & KN
-    SOC --> KN
-    GP --> W & SIM
+    SIM --> W & ECS & BR & SOC & PW
+    W --> MG & MAT
+    MG --> CH
+    BR --> GO & INV & KN
+    INV --> MAT & MG
+    SOC --> INV
 ```
 
-Thứ tự một **tick** (`Simulation::step`):
+Thứ tự một **tick** (`Simulation::step`, 1 tick = 0.05 s vật lý):
 
-1. `World::update` — cây mọc lại, lửa lan, sét, mưa, hạn hán, mùa, vật phẩm mục rữa.
-2. `rebuildGrid` — dựng lại lưới không gian (counting sort, không cấp phát).
-3. **THINK song song** — chỉ các agent "đến lượt" (batch theo `nextThink`, LOD theo camera).
-4. **ACT tuần tự** — mọi agent thực thi bước hiện tại của kế hoạch; thay đổi thế giới.
-5. `metabolism` — đói, mệt, lạnh, già, mang thai → sinh con (lai gen + đột biến).
-6. `SocietySystem::update` — hình thành nhóm, thăng cấp văn minh, luật, ngoại giao, tách nhóm, loài mới.
-7. `cleanupDead` — để lại **xác** và **công cụ cũ** trên mặt đất (tài liệu học tập cho kẻ khác!).
+1. `World::update` — mùa, mưa (theo độ ẩm khí quyển), cây mọc, sét, **MatterGrid::update** (nhiệt, lửa, chất lỏng, khí, phản ứng, chuyển pha địa hình).
+2. `rebuildGrid` — dựng lại lưới không gian.
+3. **THINK song song** — agent đến lượt: quan sát (kể cả phản ứng hoá học & sự kiện vật lý trong tầm nhìn), Utility, GOAP.
+4. **ACT tuần tự** — học từ quan sát, nhặt vật chất, thực thi hành động (đi, săn, bắn, chế tạo, sáng tạo, thí nghiệm ở lò…).
+5. `PhysicsWorld::step` + xử lý các vụ nổ do hoá học sinh ra (xung lực lên vật thể & sinh vật).
+6. `metabolism` — đói, mệt, **nhiệt độ thật (°C)**, bỏng, khí độc, ngoại lực, mang thai → sinh con.
+7. `SocietySystem::update` — nhóm, tri thức tập thể, trình độ công nghệ, thời đại, bếp/lò (nguồn nhiệt thật), ngoại giao, loài mới.
+8. `cleanupDead` — để lại xác, máu, **công cụ cũ** (người khác nhặt được có thể "học ngược").
 
 ---
 
@@ -77,303 +90,363 @@ classDiagram
         +Registry reg
         +SpeciesRegistry species
         +deque~Group~ groups
-        +SpatialGrid grid
-        +Chronicle chronicle
+        +DesignRegistry designs
+        +ProcessRegistry processes
+        +PhysicsWorld physics
         +step()
-        +spawnCreature()
-        +kill()
-        +createGroup() joinGroup() leaveGroup()
     }
-    class Registry {
-        +create() destroy()
-        +emplace~T~() get~T~()
-        +each~A,B..~(f)
+    class World {
+        +MaterialRegistry materials
+        +MatterGrid matter
+        +Tile[] tiles
     }
-    class Transform { pos; target; stuck }
-    class Body { species; hp; hunger; fatigue; cold; age; pregnancy }
-    class Inventory { food; wood; stone; ore; toolTier; weaponTier }
-    class Social { group; role; mother; father; name; status }
-    class GenomeC { Genome genome }
+    class MaterialDef {
+        density, meltPoint, boilPoint
+        hardness, toughness, elasticity
+        conductivity, heatCapacity
+        ignitionPoint, combustionHeat
+        acidity, reactivity, toxicity
+        burnResidue, smeltsTo, firesTo, hydratesTo...
+        phaseAt(T)
+    }
+    class MatterGrid {
+        float temp[]
+        MatterCell cells[]
+        update() thermal() fire() flow() gas()
+        emit(ReactionEvent)
+    }
+    class PhysicsWorld {
+        PhysBody bodies[]
+        step() blast()
+    }
     class Mind {
-        Personality pers
-        ShortTermMemory stm
-        LongTermMemory ltm
-        TechSet known
-        exposure[Stimulus]
-        skill[Skill]
-        stats[Action]
-        float intellect
-        GoalId goal
-        Plan plan
-        Rng rng
-        char thought[]
+        Personality, ShortTermMemory, LongTermMemory
+        TechSet known  «tập quán»
+        Knowhow know   «công nghệ mở»
+        idea, frustration
+        GoalId goal, Plan plan
     }
-    class Brain {
-        +think(sim,e)  «song song»
-        +act(sim,e)    «tuần tự»
-        +stimulate() learnTech() attack()
+    class Knowhow {
+        ConceptSet concepts
+        MatId[] materials
+        int[] designs, processes
+        best[Purpose], frustration[Purpose]
+    }
+    class Design {
+        Part[] parts  (vật liệu × hình dạng × kích thước)
+        DesignProps props  «tính bằng vật lý»
+        quality, parent, generation
+    }
+    class Process {
+        ReactionKind kind
+        inputs → outputs, minTemp, lowOxygen
     }
     class Group {
-        Stage stage
-        Government gov
-        Language language
-        Culture culture
-        bitset laws
-        TechSet knowledge
-        members; leader; home; territory
-        map relations
-        stockpile
+        Stage, Government, Language, Culture, laws
+        concepts, designs, processes, bestDesign[]
+        techLevel, era
+        hearth, forge(forgeHeat)
     }
-    class SocietySystem {
-        formGroups() updateGroup() advanceStage()
-        enactLaws() diplomacy() splitGroup() speciation()
-    }
-    Simulation *-- Registry
     Simulation *-- World
-    Simulation *-- Group
-    Registry o-- Transform
-    Registry o-- Body
-    Registry o-- Inventory
-    Registry o-- Social
-    Registry o-- GenomeC
-    Registry o-- Mind
-    Brain ..> Mind
-    Brain ..> Simulation
-    SocietySystem ..> Group
-    Mind *-- Personality
-    Mind *-- LongTermMemory
-    Mind *-- Plan
+    World *-- MatterGrid
+    World *-- MaterialRegistry
+    MaterialRegistry o-- MaterialDef
+    Simulation *-- PhysicsWorld
+    Simulation o-- Design
+    Simulation o-- Process
+    Mind *-- Knowhow
+    Knowhow ..> Design
+    Knowhow ..> Process
+    Group ..> Design
 ```
 
 ---
 
-## 4. ECS (Entity Component System)
+## 4. Hệ thống vật lý & hoá học
 
-`src/core/Ecs.h` — kiểu **sparse set** (giống EnTT, tối giản ~150 dòng):
+### 4.1 Vật liệu (`src/phys/Material.h`)
+Mọi thứ — gỗ, đá, đá lửa, đá vôi, đất sét, cát, thuỷ tinh, quặng (đồng, thiếc, sắt), kim loại, vàng, than, tro,
+sợi, da, xương, thịt, máu, mỡ, muối, lưu huỳnh, diêm tiêu, thuốc súng, axit, kiềm, dầu, CO₂, mê-tan, hiđrô, SO₂…
+(**46 vật liệu tự nhiên**) — có thuộc tính số gần thực tế:
 
-* `Entity` = 32 bit (`version:12 | index:20`) → phát hiện handle cũ sau khi entity chết.
-* Mỗi loại component có một `Pool<T>`: mảng **dày** (dữ liệu liền kề, duyệt nhanh, thân thiện cache)
-  + mảng **thưa** ánh xạ index → vị trí. Thêm/xoá O(1) (swap-and-pop).
-* Component là dữ liệu thuần (`Transform`, `Body`, `Inventory`, `Social`, `GenomeC`, `Mind`).
-  Logic nằm trong hệ thống (`Brain`, `Simulation::metabolism`, `SocietySystem`).
+| Nhóm | Thuộc tính |
+|---|---|
+| Vật lý | khối lượng riêng, điểm nóng chảy, điểm sôi, nhiệt dung, độ dẫn nhiệt, độ cứng (Mohs), độ dai, đàn hồi, độ nhớt, dạng bột, xốp |
+| Hoá học | điểm bắt lửa, nhiệt cháy, pH, tính hoạt động (oxi hoá), độc tính, dinh dưỡng, chất oxi hoá, chất nổ |
+| Biến đổi | cặn & khí khi cháy, nhiệt phân, đông đặc thành, nung thành, khử thành (+nhiệt độ), oxit, hydrat hoá, phân huỷ, muối hoà tan |
 
-> ⚠️ Quy tắc an toàn: **không giữ tham chiếu tới component qua lời gọi có thể thêm component**
-> (vd. `spawnCreature`) — mảng dày có thể cấp phát lại. (Lỗi này đã được AddressSanitizer bắt và sửa.)
+* **Trạng thái không lưu cố định** — `phaseAt(T)` suy ra rắn/lỏng/khí từ nhiệt độ hiện tại: nước tự đóng băng/bốc hơi,
+  đá nóng chảy thành dung nham, kim loại nung chảy để đúc.
+* **Vật liệu mới sinh ra khi đang chạy**: hai kim loại cùng nóng chảy → `MaterialRegistry::alloy()` tạo **hợp kim mới**
+  với tính chất pha trộn + *cộng hưởng ngẫu nhiên theo seed thế giới* (có cặp cứng vượt trội, có cặp tệ hơn cả hai).
+  Hợp kim của hợp kim cũng được → **danh sách vật liệu không có giới hạn trên**.
+* Mỗi thế giới còn có **2 khoáng chất lạ** sinh ngẫu nhiên (tên, độ cứng, điểm chảy… khác nhau mỗi seed).
+
+### 4.2 Lưới vật chất (`src/phys/MatterGrid.cpp`)
+Mỗi ô bản đồ có **nhiệt độ (°C)**, tối đa **3 ngăn vật chất rời/lỏng** và **1 ngăn khí**, cộng nguồn nhiệt (bếp/lò).
+
+| Hiện tượng | Mô hình |
+|---|---|
+| Truyền nhiệt | Khuếch tán theo độ dẫn nhiệt của nền + kéo về khí hậu (mùa, vĩ độ, độ cao, mưa, hiệu ứng nhà kính). Hồ nước có nhiệt dung lớn → điều hoà khí hậu. |
+| Trọng lực (top-down) | Chất lỏng **chảy xuống ô thấp hơn** theo độ cao địa hình, nhanh/chậm theo độ nhớt (nước vs dung nham); bột trượt khi dốc vượt góc nghỉ; tường chặn dòng chảy. |
+| Khí & áp suất | Khí khuếch tán theo chênh lệch, trôi theo gió, thoát dần vào khí quyển. Áp suất = lượng × (T+273)/293 (khí lý tưởng). |
+| Lửa | Cháy là **phản ứng thật**: cần nhiên liệu (cây gỗ, cỏ, nhà gỗ) + oxi + nhiệt ≥ điểm bắt lửa. Toả nhiệt & bức xạ (theo gió, giảm khi ẩm) → lan tự nhiên. Nước/mưa dập lửa. Cháy dày đặc thiếu oxi → **than củi** (nhiệt phân). |
+| Chuyển pha địa hình | Hồ < -3°C → **băng** (đi được!); tuyết tan > 6°C thành nước chảy; dung nham nguội → **bazan**; cát > 1700°C (sét đánh!) → **thuỷ tinh**; đất > 1250°C (thiên thạch) → dung nham. |
+| Chu trình vật chất | **Nước**: bốc hơi ↔ độ ẩm khí quyển ↔ mưa. **Carbon**: cháy/nung thải CO₂ ↔ cây hấp thụ, đại dương hấp thụ. **Dinh dưỡng**: xác phân huỷ → đất mùn màu mỡ + mê-tan. |
+
+Chỉ các ô **hoạt động** (có vật chất, khí, lò, nhiệt độ lệch nhiều) mới được tính hoá học; ô ổn định "ngủ" và được
+đánh thức định kỳ cho phản ứng chậm (gỉ sét, phân huỷ, bay hơi).
+
+### 4.3 Hoá học (`src/phys/Chemistry.cpp`) — 13 quy luật tổng quát
+Không liệt kê từng công thức; mỗi quy luật dựa trên **thuộc tính** nên áp dụng được cho cả vật liệu sinh ra lúc chạy:
+
+| # | Quy luật | Ví dụ thực tế trong game |
+|---|---|---|
+| 1 | Chuyển pha (nóng chảy, đông đặc, sôi, ngưng tụ) | nước ↔ băng ↔ hơi; cát nóng chảy nguội → thuỷ tinh |
+| 2 | Cháy / nhiệt phân / nổ | Gỗ + O₂ → Tro + CO₂; Gỗ (thiếu oxi) → Than; mê-tan, hiđrô gặp lửa → nổ |
+| 3 | Nung (firing/calcination) | Đất sét 850°C → Gạch; Đá vôi → Vôi sống + CO₂ |
+| 4 | Khử quặng (luyện kim) | Quặng đồng + Than ≥1000°C → Đồng + CO₂; quặng sắt cần ≥1250°C |
+| 5 | Hợp kim | Đồng lỏng + Thiếc lỏng → **vật liệu mới** |
+| 6 | Hydrat hoá | Vôi sống + Nước → Vôi tôi **+320°C** (đủ làm cháy gỗ!); Tro + Nước → Kiềm; SO₂ + nước → Axit (mưa axit) |
+| 7 | Axit – bazơ | Axit + Kiềm → Nước muối + nhiệt |
+| 8 | Axit – kim loại / đá vôi | Axit + Sắt → Muối + **Hiđrô** (cháy nổ được); Axit + Đá vôi → CO₂ sủi bọt |
+| 9 | Oxi hoá chậm | Sắt + ẩm → Gỉ sắt |
+| 10 | Tôi nguội | Dung nham + Nước → **Đá vỏ chai** + Hơi nước |
+| 11 | Trộn hỗn hợp | Than + Lưu huỳnh + Diêm tiêu → **Thuốc súng** |
+| 12 | Phân huỷ | Thịt/sợi → Đất mùn + Mê-tan (đất màu mỡ hơn) |
+| 13 | Bay hơi / kết tủa | Nước muối cạn → **Muối kết tủa** |
+
+Mỗi phản ứng phát ra một `ReactionEvent` (vị trí, chất tham gia, sản phẩm, nhiệt độ, thiếu oxi?) → dùng cho **debug**
+và để **sinh vật quan sát mà học** (xem §7). `worldbox_sim --chemtest` kiểm tra 9 phản ứng tiêu biểu một cách xác định.
+
+### 4.4 Vật lý vật thể (`src/phys/Physics.cpp`) — 2.5D
+* Vật thể có vị trí (x, y) + **độ cao z**, vận tốc, khối lượng, vật liệu, nhiệt độ.
+* **Trọng lực** g = 9.8 m/s² theo z, **lực cản** ∝ v²·diện tích/khối lượng, **gió** đẩy vật nhẹ.
+* **Va chạm**: mặt đất (nảy theo độ đàn hồi vật liệu, ma sát, lăn xuống dốc), công trình (phá huỷ theo **động năng**
+  so với độ cứng tường), sinh vật (sát thương = ½mv² × độ sắc + bị đẩy lùi), vật–vật (bảo toàn động lượng).
+* **Archimedes**: vật rơi xuống nước nổi nếu khối lượng riêng < 1000 kg/m³, ngược lại chìm.
+* **Nổ**: xung lực hướng tâm ∝ E/(r²+1) lên vật thể và sinh vật; nhà sập, **mảnh vỡ văng ra là vật thể vật lý thật**.
+* Sinh vật **dùng định luật vật lý**: cung/ná/máy bắn đá phóng vật thể với vận tốc tính từ năng lượng đàn hồi; cá thể
+  tự giải phương trình đạn đạo **θ = ½·asin(g·d / v²)** để ngắm (`ballisticAngle`), sai số theo tay nghề.
 
 ---
 
-## 5. AI cá nhân (Individual Agent AI)
+## 5. ECS (Entity Component System)
 
-Mỗi sinh vật — người, sói, gấu, thỏ, quỷ — có một `Mind` riêng. Vòng lặp:
+`src/core/Ecs.h` — kiểu **sparse set** (~150 dòng): `Entity` 32 bit (version|index), mỗi component một `Pool<T>`
+(mảng dày liền kề + mảng thưa), thêm/xoá O(1). Component dữ liệu thuần: `Transform` (vị trí, ngoại lực đẩy),
+`Body`, `Inventory` (gỗ/đá/thức ăn + **vật liệu bất kỳ** + **vật phẩm theo thiết kế** kèm độ mòn), `Social`, `GenomeC`, `Mind`.
+
+> ⚠️ Không giữ tham chiếu tới component qua lời gọi có thể thêm component (mảng dày cấp phát lại) — lỗi này đã được
+> AddressSanitizer phát hiện và sửa.
+
+---
+
+## 6. AI cá nhân (Individual Agent AI)
 
 ```
- QUAN SÁT ──► SUY NGHĨ ──► QUYẾT ĐỊNH ──► HÀNH ĐỘNG ──► HỌC ──► TIẾN HOÁ
- perceive     Utility AI     GOAP A*        executors    kỹ năng,     gen + văn hoá
- (grid +      chấm điểm      tìm chuỗi      mỗi tick     tỷ lệ thành  truyền cho
-  quét ô)     mọi mục tiêu   hành động                   công, phát   thế hệ sau
-                                                         minh, dạy
+ QUAN SÁT ──► SUY NGHĨ ──► QUYẾT ĐỊNH ──► HÀNH ĐỘNG ──► HỌC ──► TIẾN HOÁ (vô hạn)
+ sinh vật,    Utility AI    GOAP A*        di chuyển,     kỹ năng,      gen (13), văn hoá,
+ tài nguyên,  17+ mục tiêu  37 hành động   săn, bắn,      khái niệm,    thiết kế & quy trình
+ lửa, nhiệt,  × tính cách   (trạng thái    chế tạo,       vật liệu,     truyền cho thế hệ sau,
+ PHẢN ỨNG,    × bức xúc     64 bit)        sáng tạo,      quy trình,    cải tiến không trần
+ VẬT LÝ                                    thí nghiệm     thiết kế
 ```
 
-### 5.1 Quan sát (`perceive`)
-* Tầm nhìn = `5 + trí_tuệ×6 + tò_mò×3` (+3 với thú ăn thịt).
-* Truy vấn `SpatialGrid`: phân loại mỗi cá thể thành **Đồng minh / Họ hàng / Kẻ lạ / Kẻ thù / Kẻ săn mồi / Con mồi**,
-  tính tổng mức đe doạ, tìm bạn đời gần nhất…
-* Quét ô (thưa dần khi tầm nhìn rộng): thức ăn, cây, đá, quặng, **lửa**, **xác chết**, **công cụ cũ**.
-* Ghi vào **trí nhớ ngắn hạn** (blackboard) và **dài hạn** (đồ thị sự kiện).
-* Phát hiện **kích thích** (thấy lửa, cầm đá, thấy quặng, chứng kiến cái chết, bị nước chặn…) → xếp hàng xử lý phát minh ở pha tuần tự.
-
-### 5.2 Trí nhớ (`Memory.h`)
-* **Ngắn hạn**: những gì vừa thấy (≤ 20 percept) + các con trỏ "gần nhất".
-* **Dài hạn**: `Fact{loại, vị trí|đối tượng, độ tin cậy, lần củng cố}` — nguồn thức ăn, bãi săn, nguy hiểm,
-  nơi có quặng, lửa, nhà… Sức chứa `8 + trí_tuệ×36`; **quên dần** (đường cong lãng quên, trí tuệ cao quên chậm);
-  bị **phủ nhận** khi tới nơi mà tài nguyên đã hết.
-* **Kinh nghiệm hành động**: tỷ lệ thành công/thất bại từng hành động → nhân vào chi phí GOAP
-  (học tăng cường đơn giản: hành động hay hỏng sẽ ít được chọn).
-
-### 5.3 Suy nghĩ — Utility AI (`scoreGoals`)
-17 mục tiêu: Ăn, Nghỉ, Chạy trốn, Tự vệ, Sinh sản, Giao tiếp, Khám phá, Lao động cho nhóm, Chế tạo công cụ,
-Chế tạo vũ khí, Xây dựng, Trồng trọt, Giữ lãnh thổ, Thờ cúng, Chiến tranh, Giành quyền lực, Thư thả.
-
-Điểm = **nhu cầu** (đường cong đói/mệt/lạnh/đe doạ) × **tính cách** (cởi mở, chăm chỉ, hướng ngoại, hoà đồng,
-nhút nhát, tham vọng) × **ngữ cảnh** (vai trò trong nhóm, chiến tranh, luật lệ, nhà ở, dân số…) + quán tính.
-
-### 5.4 Quyết định — GOAP (`Goap.h/.cpp`)
-* Trạng thái thế giới theo góc nhìn cá nhân = **32 bit** (`HasFood`, `KnowsTree`, `SeesPrey`, `AtHome`…).
-* 34 hành động có `pre`, `effect`, `cost`, yêu cầu (**tech**, **tay khéo**, **thuộc nhóm**, **chế độ ăn**).
-* A* tìm chuỗi rẻ nhất (≤ 8 bước). Ví dụ thực tế trong game:
-  * Người đói: `Đi tới nguồn thức ăn → Hái lượm → Ăn đồ mang theo`
-  * Sói đói: `Lùng sục con mồi → Săn mồi → Ăn đồ mang theo`
-  * Thợ xây: `Gom vật liệu xây dựng → Xây công trình`
-  * Thợ rèn: `Đào quặng → Chế tạo công cụ` (cần biết *Khai khoáng*, *Luyện kim*)
-* Không lập được kế hoạch → thử mục tiêu điểm cao thứ hai → khám phá.
-
-### 5.5 Hành động (`exec`)
-Mỗi hành động là một máy trạng thái nhỏ chạy theo tick (đi tới, làm việc N tick, áp kết quả). Di chuyển dùng
-steering lách vật cản (thử các góc lệch). Ví dụ đáng chú ý:
-* **Săn mồi**: mỗi đồng loại cùng nhóm ở gần **+35%** hiệu quả nếu biết *Săn theo bầy*; trí tuệ cao phối hợp tốt hơn.
-  Có luật *Chia sẻ con mồi* → cả bầy được ăn.
-* **Giao tiếp / dạy học**: truyền một tri thức + chia sẻ trí nhớ ("chỗ kia có quả"). Có *Ngôn ngữ* → hiệu quả hơn nhiều.
-* **Nhặt công cụ cũ**: "học ngược" công nghệ của nền văn minh đã chết.
-
-### 5.6 Học & phát minh (`Knowledge.h`, `Brain::stimulate`)
-Không có công nghệ nào được cho sẵn. Mỗi tech cần:
-* **ngưỡng trí tuệ**, **tiền đề**, và một **kích thích** phải trải nghiệm đủ số lần.
-  Ví dụ: *Dùng lửa* ← thấy đám cháy (sét đánh!); *Công cụ đá* ← cầm nắm đá + gỗ; *Xây cầu* ← bị nước chặn đường;
-  *Tôn giáo* ← chứng kiến cái chết/thiên tai; *Luật pháp* ← sống định cư lâu.
-* Xác suất phát minh ∝ (trí tuệ − ngưỡng) × tò mò × `learningRate`.
-* Một số tech **động vật cũng học được** (săn theo bầy, đánh dấu lãnh thổ, thứ bậc, nơi trú ẩn, ngôn ngữ, tôn giáo, luật).
-  Tech cần tay khéo (công cụ, xây nhà…) chỉ mở khi loài tiến hoá ra chi trước cầm nắm.
+* **Quan sát**: phân loại sinh vật xung quanh (đồng minh, kẻ lạ, kẻ thù, thú săn mồi, con mồi), quét tài nguyên
+  (thức ăn, gỗ, đá — đúng loại đá, quặng — đúng loại quặng), lửa (lửa gần = mối nguy → bỏ chạy về phía mát hơn),
+  xác, công cụ cũ, **phản ứng hoá học và sự kiện vật lý trong tầm nhìn**.
+* **Trí nhớ**: ngắn hạn (blackboard) + dài hạn (đồ thị sự kiện có độ tin cậy, quên dần, bị phủ nhận) + thống kê thành
+  công/thất bại từng hành động (học tăng cường → chi phí GOAP).
+* **Utility**: Ăn, Nghỉ, Chạy trốn, Tự vệ, Sinh sản, Giao tiếp, Khám phá, Lao động, **Chế tạo, Sáng tạo, Thí nghiệm,
+  Sản xuất**, Xây dựng, Trồng trọt, Giữ lãnh thổ, Thờ cúng, Chiến tranh, Giành quyền lực.
+* **GOAP**: 37 hành động (pre/effect/cost); ví dụ `Lùng sục con mồi → Săn mồi → Ăn` hay
+  `Đào quặng → Nộp quặng vào kho`, `Sáng tạo thiết kế mới` (bên trong tự đi kiếm vật liệu).
+* **Phản xạ**: bị bỏng → nghĩ lại ngay lập tức; né ô quá nóng; khi bị lửa vây thì chỉ đi về phía mát hơn.
 
 ---
 
-## 6. Tiến hoá
+## 7. Công nghệ MỞ & tiến hoá vô hạn
 
-### 6.1 Sinh học (`Genome.h`)
-10 gen 0..1: Trí tuệ, Sức mạnh, Tốc độ, Tính bầy đàn, Hung hăng, Tò mò, Sinh sản, Tuổi thọ, Chịu lạnh, Chịu nóng.
-Con = lai ghép bố mẹ + đột biến Gauss (`mutationRate`). Không có "hàm fitness" — **chọn lọc tự nhiên** xảy ra vì
-cá thể săn giỏi/ thông minh/ chịu lạnh tốt sống lâu và sinh nhiều hơn.
+> **Không có tech tree.** `Knowledge.h` chỉ còn **tập quán xã hội** (săn bầy, thứ bậc, ngôn ngữ, tôn giáo, chữ viết,
+> luật…). Toàn bộ công nghệ vật chất là hệ thống mở trong `src/ai/Invention.*` và `Creativity.cpp`.
 
-### 6.2 Trí tuệ hiệu dụng
-`intellect = gen_trí_tuệ × độ_trưởng_thành + kinh_nghiệm_học_được (≤0.25) + văn_hoá_nhóm (≤0.12)`
-→ hiệu ứng **"bánh cóc văn hoá"**: nhóm càng nhiều tri thức, thành viên càng "khôn" hơn tổ tiên cùng bộ gen.
+### 7.1 Bốn lớp tri thức (mỗi cá thể một bản riêng — `Knowhow`)
+1. **Vật liệu đã biết** — đã cầm, đào, nhặt, săn được, hoặc thấy sinh ra trong phản ứng.
+2. **Khái niệm vật lý** (13): sắc bén, đòn bẩy, sức nổi, đàn hồi, vật chứa, sự cháy, cách nhiệt, nóng chảy, khử quặng,
+   hợp kim, chuyển động quay, áp suất, ma sát. Học bằng **trải nghiệm & quan sát thật**, theo **bất kỳ thứ tự nào**:
+   khúc gỗ lăn xuống sông và nổi → *sức nổi*; tảng đá lăn xuống dốc → *chuyển động quay*; đá vỡ cứa tay → *sắc bén*;
+   thấy vụ nổ/sôi → *áp suất*; xếp đá quanh bếp → *cách nhiệt*; thấy luyện quặng → *khử quặng*…
+   Khái niệm quyết định cá thể **hình dung ra** được hình dạng nào (không hiểu đàn hồi thì không nghĩ ra cánh cung).
+3. **Thiết kế** — tổ hợp ≤ 6 bộ phận *(vật liệu × hình dạng × kích thước)*, 14 hình dạng: cục, mảnh sắc, cán, mũi nhọn,
+   lưỡi, đầu nặng, dây, tấm, vật chứa, ván, bánh xe, thân đàn hồi, ống, tường.
+4. **Quy trình hoá học** — (đầu vào, nhiệt độ, thiếu oxi?) → sản phẩm, tạo ra từ một `ReactionEvent` **thật đã quan sát**.
 
-### 6.3 Di truyền văn hoá
-* Con thừa hưởng ngẫu nhiên tri thức của bố mẹ + trí nhớ về nguồn thức ăn + nếp chăm chỉ.
-* Luật *Người già dạy trẻ* tăng tỉ lệ dạy cho trẻ con. *Chữ viết* → tri thức được lưu ở cấp nhóm, thành viên "đọc" lại được;
-  không có chữ viết → tri thức có thể **thất truyền** khi người biết cuối cùng chết.
-* **Lan truyền văn hoá** giữa các láng giềng thân thiện.
+### 7.2 Hiệu năng thiết kế = công thức vật lý (`evaluateDesign`)
+| Mục đích | Mô hình |
+|---|---|
+| Cắt | độ cứng lưỡi × (0.35 + độ dai) × **đòn bẩy** (cán dài, cán giòn thì vô dụng) |
+| Đào | độ cứng mũi × đòn bẩy × (1 + khối lượng đầu) |
+| Đâm | độ cứng mũi × (1 + chiều dài cán) |
+| Đập | √(khối lượng đầu) × √(độ cứng) × đòn bẩy |
+| Bắn xa | năng lượng đàn hồi E = đàn_hồi × kích thước × 70 J → **v = √(2E/m)** của mũi tên |
+| Công thành | thân đàn hồi lớn hoặc **đòn bẩy đối trọng** (trebuchet) ném đạn 10 kg → động năng (kJ) |
+| Chuyên chở | dung tích vật chứa × (1 + 1.5·số bánh xe) — ma sát lăn ≪ ma sát trượt |
+| Nổi | **Archimedes**: lượng nước chiếm chỗ − khối lượng bản thân (thuyền độc mộc, bè, thuyền da) |
+| Nhiệt độ lò | 600 + 900·(1 − độ dẫn nhiệt của tường), **không vượt điểm chảy của tường**; ống bễ (+400) |
+| Tạo lửa | ma sát: khoan gỗ ~300°C, khoan cung ×1.7; hoặc đá lửa đập thép → tia lửa 800°C |
+| Giữ ấm | Σ (1 − độ dẫn nhiệt) × kích thước tấm che |
 
-### 6.4 Hình thành loài mới (`SocietySystem::speciation`)
-Nhóm tồn tại ≥ 15 năm, ≥ 6 thế hệ, gen trung bình lệch ≥ 0.30 so với loài gốc → tạo `SpeciesDef` mới
-(tên theo ngôn ngữ nhóm, ví dụ *"Sói Krugthai"*). Nếu trí tuệ gen trung bình > 0.5 → **tiến hoá ra chi trước cầm nắm**
-(`dexterous = true`): bầy sói đó từ nay có thể chế tạo công cụ và xây nhà!
+**Ràng buộc chế tạo** (`canFabricate`) cũng là vật lý: đá giòn & cứng thì ghè được; gỗ/xương cần công cụ cắt đủ sắc;
+kim loại phải **đúc** (lò ≥ điểm nóng chảy) hoặc **rèn** (lò ≥ 60% + búa đủ nặng); ván/bánh xe cần lưỡi cắt tốt…
+Vì vậy tiến bộ tự **xâu chuỗi**: công cụ tốt → gia công được vật liệu khó → lò nóng hơn → kim loại mới → công cụ tốt hơn.
+
+### 7.3 Thuật toán sáng tạo (`conceiveIdea` → kiếm vật liệu → `realizeIdea`)
+1. Nhu cầu chưa thoả tích tụ thành **bức xúc** theo mục đích (chặt chậm, quặng quá cứng, bị nước chặn, lạnh, đánh thua…).
+2. Chọn mục đích (ngẫu nhiên có trọng số theo bức xúc²) → sinh N = 4 + 14·trí_tuệ phương án: **đột biến** thiết kế tốt nhất,
+   **loại suy** từ thiết kế khác, hoặc ghép mới — chỉ dùng hình dạng nghĩ ra được và vật liệu đã biết.
+3. **Mô hình tinh thần**: ước lượng = vật lý thật × sai số (giảm khi thông minh hơn) − phạt độ phức tạp → chọn ý tưởng.
+4. **Tự đi kiếm** vật liệu còn thiếu (đúng loại đá/quặng, chặt gỗ…), rồi làm **nguyên mẫu** (tiêu tốn vật liệu thật).
+5. **Thử nghiệm**: hiệu năng thật. Tốt hơn → thiết kế mới (tên theo ngôn ngữ nhóm, ví dụ *"Rìu Krănkgă"*), lưu phả hệ
+   (`parent`, `generation`), **chất lượng tay nghề** tăng mỗi thế hệ cải tiến (không có trần). Thất bại → học khái niệm
+   liên quan (bè đá chìm → hiểu *sức nổi*).
+6. Ngoài ra: **thí nghiệm ở lò** — bỏ ngẫu nhiên 2–3 vật liệu đang có vào bếp/lò (MatterGrid thật) xem điều gì xảy ra;
+   phản ứng sinh ra được quan sát → **quy trình mới**, **vật liệu mới** (kể cả hợp kim chưa từng tồn tại).
+7. **Sản xuất**: chạy quy trình đã biết ở lò của nhóm (nạp nguyên liệu thật, chờ phản ứng, thu sản phẩm vào kho).
+
+### 7.4 Vì sao "vô hạn" và "khó dự đoán"
+* Vật liệu tăng không giới hạn (hợp kim của hợp kim, khoáng chất lạ theo seed); chất lượng tay nghề tăng mãi;
+  **trình độ công nghệ** của nhóm là số thực liên tục (tổng log hiệu năng + độ rộng tri thức), không có mức tối đa.
+* **Thời đại** được đặt tên theo vật liệu tiên tiến nhất đang dùng (*Thời đại Đá → Đồng → "Hợp kim Đồng–Thiếc" →
+  một hợp kim do chính nhóm đó tạo ra*) — không có danh sách thời đại định sẵn.
+* Con đường phụ thuộc môi trường (có núi lửa? có quặng gì? có sông để thấy gỗ nổi?), tính cách, may rủi của
+  thí nghiệm, và lịch sử truyền dạy — xem ví dụ §10.3.
 
 ---
 
-## 7. Nền văn minh: Bầy → Bộ lạc → Làng → Thị trấn → Thành phố → Quốc gia
+## 8. Tiến hoá sinh học & văn hoá
+
+* **13 gen**: trí tuệ, sức mạnh, tốc độ, bầy đàn, hung hăng, tò mò, sinh sản, tuổi thọ, chịu lạnh, chịu nóng,
+  **khéo tay**, **kích thước**, **bơi lội** — lai ghép + đột biến; chọn lọc tự nhiên không cần hàm fitness.
+  Khéo tay quyết định chi trước cầm nắm (mở ra chế tạo), kích thước ảnh hưởng máu/sức/lượng ăn, bơi giỏi thì qua được nước nông.
+* **Trí tuệ hiệu dụng** = gen × độ trưởng thành + kinh nghiệm + văn hoá nhóm ("bánh cóc văn hoá").
+* **Di truyền văn hoá**: con thừa hưởng tập quán, khái niệm, vật liệu, thiết kế, quy trình của cha mẹ (một phần);
+  dạy học qua giao tiếp (ngôn ngữ giúp nhiều); lan truyền giữa láng giềng; **chữ viết** lưu tri thức ở cấp nhóm,
+  không có chữ viết thì thiết kế có thể **thất truyền**; nhặt công cụ cũ → **học ngược** thiết kế.
+* **Loài mới**: nhóm tồn tại ≥ 15 năm, ≥ 6 thế hệ, gen lệch ≥ 0.30 → loài mới; gen khéo tay trung bình vượt ngưỡng →
+  **tiến hoá ra chi trước cầm nắm** (sói khéo tay có thể bắt đầu chế tạo!).
+
+---
+
+## 9. Nền văn minh: Bầy → Bộ lạc → Làng → Thị trấn → Thành phố → Quốc gia
 
 | Giai đoạn | Điều kiện (loài có tay khéo) | Điều kiện (thú) |
 |---|---|---|
 | Bầy / Nhóm du mục | ≥ 3 đồng loại tụ lại | như bên trái |
-| Bộ lạc / Bộ tộc | ≥ 6, biết *Thứ bậc* và (*Ngôn ngữ* hoặc *Đánh dấu lãnh thổ* + *Săn theo bầy*) | như bên trái |
+| Bộ lạc / Bộ tộc | ≥ 6, *Thứ bậc* + (*Ngôn ngữ* hoặc *Đánh dấu lãnh thổ* + *Săn theo bầy*) | như bên trái |
 | Làng / Làng hang ổ | ≥ 10, ≥ 3 nhà/hang, định cư ≥ 1 năm | như bên trái |
 | Thị trấn / Lãnh địa | ≥ 22, ≥ 7 nhà, *Trồng trọt* | ≥ 18, *Ngôn ngữ* + *Tôn giáo* |
-| Thành phố | ≥ 40, ≥ 12 nhà, *Xây đá* | ≥ 30, *Luật pháp* |
-| **Quốc gia** | ≥ 30, *Luật pháp* + *Chữ viết* + Toà thị chính, từ Thị trấn | ≥ 20, *Luật pháp*, từ Làng |
+| Thành phố | ≥ 40, ≥ 12 nhà, **trình độ công nghệ ≥ 12** | ≥ 30, *Luật pháp* |
+| **Quốc gia** | ≥ 30, *Luật pháp* + *Chữ viết* + Toà thị chính | ≥ 20, *Luật pháp*, từ Làng |
 
-Khi thành lập quốc gia: tên quốc gia, **quốc kỳ** (2 màu + biểu tượng), **thể chế** (Quân chủ, Cộng hoà, Thần quyền,
-Quân phiệt… suy ra từ văn hoá), quốc đạo, ngôn ngữ. Dân số giảm mạnh → **suy tàn** (tụt cấp).
-
-Các cơ chế nổi lên (emergent):
-* **Văn hoá** = trung bình động tính cách thành viên (thượng võ, tín ngưỡng, ham hiểu biết, cộng đồng, bài ngoại, truyền thống).
-* **Luật lệ** ban hành theo tri thức + văn hoá: *Đầu đàn ăn trước, Chia sẻ con mồi, Bảo vệ lãnh thổ, Cấm giết đồng loại,
-  Người già dạy trẻ, Nghĩa vụ quân sự, Đóng thuế, Nghĩa vụ thờ cúng, Mở cửa biên giới, Bài ngoại*.
-* **Vai trò**: thủ lĩnh, trưởng lão, lính, thợ xây, nông dân, tư tế, thợ săn, hái lượm, trẻ con — giao theo nhu cầu nhóm + tính cách.
-* **Kiến trúc**: lều → nhà gỗ → nhà đá → kho lương, xưởng, lò rèn, đền thờ, toà thị chính, tường thành, tháp, lâu đài, cầu;
-  màu mái theo màu nhóm. Thú xây *hang ổ* và *dấu lãnh thổ*.
-* **Ngôn ngữ thủ tục**: mỗi nhóm có bộ âm vị riêng; nhóm tách ra → ngôn ngữ **trôi dạt** (cùng ngữ hệ nghe na ná nhau).
-* **Tôn giáo**: lần đầu có tín ngưỡng → sinh ra một vị thần, lĩnh vực theo trải nghiệm (lửa, mưa giông, mặt trăng cho sói…).
-* **Ngoại giao**: thiện cảm ± theo họ hàng, tranh chấp biên giới, giết chóc; tuyên chiến, hành quân, phá công trình,
-  nghị hoà khi mỏi mệt, **chinh phục & sáp nhập** (kẻ thắng học tri thức của kẻ thua).
-* **Tách nhóm**: quá đông / bất đồng → kẻ tham vọng nhất dẫn 40% đi lập nhóm mới.
+* **Công trình theo năng lực vật lý**, không theo tech: nhà gỗ cần công cụ cắt ≥ 2, nhà đá/tường cần cắt ≥ 4.5 **hoặc gạch
+  nung** (một con đường khác!), cầu cần hiểu sức nổi, **lò luyện** cần thiết kế lò ≥ 900°C, **bếp lửa** cần biết tạo lửa.
+  Bếp/lò là **nguồn nhiệt thật** trong MatterGrid, đốt củi/than của kho chung (than cho thêm +150°C).
+* Văn hoá, luật lệ (10 loại), thể chế (7 loại), vai trò, ngôn ngữ thủ tục, tôn giáo, ngoại giao, chiến tranh, chinh phục
+  (kẻ thắng lấy vật liệu, thiết kế của kẻ thua), tách nhóm — như trước.
 
 ---
 
-## 8. Ví dụ cụ thể (kịch bản có sẵn)
+## 10. Ví dụ cụ thể
 
-### 8.1 Đàn sói → Bộ tộc sói có lãnh thổ & luật lệ (`--scenario wolves`)
-1. 10 con sói (trí tuệ gen ~0.26) giữa đồng cỏ đầy hươu/thỏ, một bầy đối thủ ở xa.
-2. Chúng tụ thành **Bầy**. Săn cùng nhau → kích thích *GroupHunt* → con thông minh nhất phát minh **Săn theo bầy**,
-   rồi **dạy** lại cho đồng loại qua hành động *Giao tiếp*.
-3. Săn theo bầy hiệu quả hơn → sói thông minh ăn no, sinh nhiều → gen trí tuệ của quần thể **tăng dần**.
-4. Sống đông → **Thứ bậc xã hội** (con đầu đàn mạnh nhất). Chạm trán bầy khác → **Đánh dấu lãnh thổ**.
-5. Đủ điều kiện → **Bộ tộc sói**: lãnh thổ riêng (viền màu trên bản đồ), luật *Đầu đàn ăn trước*, *Chia sẻ con mồi*,
-   *Bảo vệ lãnh thổ* — sói đi tuần đánh dấu biên giới, tấn công kẻ xâm nhập.
-6. Về lâu dài: *Nơi trú ẩn* → **làng hang ổ**, *Ngôn ngữ*, *Tôn giáo* (thờ "Thần Mặt Trăng"), có thể tiến hoá
-   thành **loài sói mới** và lập **Vương quốc Sói**.
+### 10.1 Đàn sói → Bộ tộc sói có lãnh thổ & luật lệ (`--scenario wolves`)
+Săn chung → *Săn theo bầy* → được dạy lại cho cả bầy → sói thông minh ăn no, sinh nhiều → trí tuệ quần thể tăng →
+*Thứ bậc* → *Đánh dấu lãnh thổ* → **Bộ tộc sói** (lãnh thổ có viền, luật *Đầu đàn ăn trước*, *Chia sẻ con mồi*,
+*Bảo vệ lãnh thổ*) → hang ổ → tôn giáo → loài sói mới.
+<!-- WOLF_RESULTS -->
 
-Kết quả chạy thật (`worldbox_sim --scenario wolves --seed 3`): bộ tộc sói đầu tiên hình thành ở **năm 5**,
-làng hang ổ ở năm 13, bầy đầu tiên thờ thần ("Thần Cái Chết") ở năm 20, và từ năm 25 bắt đầu tách ra
-các loài sói mới (*"Sói Raimrem"*, *"Sói Vêgtô"*…).
+### 10.2 Người nguyên thuỷ (`--scenario humans`)
+<!-- HUMAN_RESULTS -->
 
-### 8.2 Người nguyên thuỷ → Quốc gia (`--scenario humans`)
-1. 14 người trắng tay cạnh rừng và đồi đá.
-2. Nghịch đá + gỗ → **Công cụ đá**; sét đánh cháy rừng → **Dùng lửa** (nấu chín: no lâu hơn, ấm hơn).
-3. Lạnh/mưa → **Nơi trú ẩn** → lều; đốn gỗ nhiều → **Chế biến gỗ** → nhà gỗ → **Làng**.
-4. Ăn cây trái lâu → **Trồng trọt** → ruộng, kho lương → **Thị trấn**.
-5. Thấy quặng → **Khai khoáng**; lửa + quặng → **Luyện kim** → vũ khí kim loại.
-6. Ngôn ngữ + trồng trọt → **Chữ viết**; định cư lâu → **Luật pháp** → toà thị chính → **QUỐC GIA**.
-
-Kết quả chạy thật (`worldbox_sim --scenario humans --seed 8`): làng đầu tiên ở năm 18, thị trấn ở năm 39,
-**quốc gia đầu tiên ở năm 42** (*"Thánh quốc Rainai"* — thể chế Thần quyền, quốc đạo thờ thần Mưa Giông).
-Mỗi seed cho một lịch sử khác nhau (seed 5: làng ở năm 15, thị trấn ở năm 48).
+### 10.3 Phát triển KHÓ DỰ ĐOÁN: "Hai bộ tộc song sinh" (`--scenario twins`)
+Hai nhóm người **nhân bản y hệt** (cùng 12 bộ gen, cùng tri thức ban đầu) được thả cùng lúc: (A) cạnh **hồ dung nham
+núi lửa** — nhiều bazan, đá vỏ chai, lưu huỳnh, hơi nóng; (B) **rừng lạnh ven sông** — gỗ, đất sét, băng, mùa đông khắc nghiệt.
+Không có dòng code nào nói nhóm nào phải phát triển cái gì.
+<!-- TWIN_RESULTS -->
 
 ---
 
-## 9. Hiệu năng
+## 11. Debug trực quan
+
+* **Bong bóng suy nghĩ** trên đầu sinh vật (F1 / nút *Suy nghĩ*) + thanh trí tuệ.
+* **Bảng sinh vật**: nhu cầu, trí tuệ & giai đoạn nhận thức, mục tiêu + kế hoạch GOAP, điểm Utility, tập quán,
+  **khái niệm đã hiểu**, **thiết kế tốt nhất đang mang/đã biết**, **ý tưởng đang theo đuổi**, kỹ năng, trí nhớ.
+* **Bảng nền văn minh**: giai đoạn, thể chế, **thời đại & trình độ công nghệ**, thiết kế tốt nhất, lò luyện (°C),
+  văn hoá, luật, ngoại giao.
+* **Lớp hiển thị** (nút *Lớp*): Thường · **Nhiệt độ** (xanh → đỏ → trắng) · **Khí & áp suất** (khung đỏ = áp suất cao) ·
+  **Phản ứng** (nhãn nổi "Quặng đồng + Than củi → Đồng + CO₂ (1150°C)" tại chỗ đang phản ứng).
+* **Bảng Hoá học**: CO₂ khí quyển, độ ẩm, gió, số ô hoạt động/đang cháy/vật thể bay, **vật liệu mới sinh ra**,
+  kỷ lục phát minh thế giới, danh sách phản ứng gần đây (chạm để bay camera tới).
+* Vật thể vật lý vẽ có **bóng đổ** (độ cao z), mũi tên theo hướng bay, mảnh thiên thạch nóng đỏ.
+
+---
+
+## 12. Hiệu năng
 
 | Kỹ thuật | Ở đâu |
 |---|---|
-| ECS dữ liệu liền kề | `core/Ecs.h` |
-| Lưới không gian (CSR, không cấp phát) | `core/SpatialGrid.h` |
-| **Batch update**: agent chỉ suy nghĩ mỗi `thinkInterval` tick, lệch pha nhau | `Simulation::step` |
-| **LOD**: ngoài màn hình 12 tick/lần, sinh vật bản năng +3, thủ lĩnh 4 | `Simulation::metabolism` |
-| **Song song hoá** pha suy nghĩ (đọc-only thế giới, ghi-only bộ não riêng) | `core/ThreadPool.h` |
-| Quét ô thưa theo bàn cờ xen kẽ giữa các nhịp | `perceive` |
-| Bộ đệm `thread_local` cho A* | `planActions` |
-| Texture địa hình chỉ vẽ lại ô bẩn, upload thưa | `app/Renderer.cpp` |
-| Trần dân số mềm theo loài + mật độ (carrying capacity) | `scoreGoals` |
+| ECS dữ liệu liền kề, lưới không gian CSR | `core/` |
+| Batch + LOD tần suất suy nghĩ (ngoài màn hình, sinh vật bản năng nghĩ thưa hơn) | `Simulation` |
+| Pha suy nghĩ **song song** (đọc-only thế giới, ghi-only bộ não riêng) — kết quả **xác định** bất kể số luồng | `ThreadPool` |
+| Hoá học chỉ trên **ô hoạt động**; ô ổn định ngủ, đánh thức định kỳ | `MatterGrid` |
+| Khuếch tán nhiệt 2 tick/lần; chuyển pha địa hình 30 tick/lần | `MatterGrid` |
+| Giới hạn số vật thể vật lý (600) và va chạm vật–vật chỉ giữa vật lớn | `PhysicsWorld` |
+| Texture địa hình chỉ vẽ lại ô bẩn | `Renderer` |
 
-Đo thực tế (4 lõi, headless): ~1000 tick/s với ~3000 agent. Ở tốc độ 1x game cần 20 tick/s.
+Đo (4 lõi, headless, ~2000 agent + lưới vật chất 192²): khoảng **800–900 tick/s**; game cần 20 tick/s ở tốc độ 1x.
+Kiểm tra bộ nhớ & luồng: AddressSanitizer, UBSan, ThreadSanitizer sạch.
 
 ---
 
-## 10. Build
+## 13. Build
 
 ### PC
 ```bash
 sudo apt install libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev  # Linux
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-./build/worldbox                      # game
-./build/worldbox_sim --scenario wolves --years 40   # headless
-ctest --test-dir build                # kiểm thử kịch bản
+./build/worldbox                                           # game
+./build/worldbox_sim --scenario twins --years 120 --seed 21  # headless
+./build/worldbox_sim --chemtest                            # kiểm thử hoá học
+ctest --test-dir build --output-on-failure
 ```
-Windows: mở thư mục bằng Visual Studio (CMake) hoặc `cmake -G "Visual Studio 17 2022"`.
 
 ### Android (APK)
-Yêu cầu: Android SDK (platform 34), **NDK** (r25+), CMake 3.22.1 của SDK, JDK 17, Gradle 8.7+.
+Android SDK 34, NDK r25+, CMake 3.22.1 (SDK), JDK 17, Gradle 8.7+:
 ```bash
-cd android
-gradle assembleRelease -PndkVersion=<phiên_bản_NDK_đã_cài>
-# → android/app/build/outputs/apk/release/app-release.apk
+cd android && gradle assembleRelease -PndkVersion=<phiên_bản_NDK>
 adb install -r app/build/outputs/apk/release/app-release.apk
 ```
-* Không có mã Java: `NativeActivity` nạp `libmain.so` (`android.app.lib_name = main`).
-* Gradle gọi chính `CMakeLists.txt` gốc; khi `ANDROID` được đặt, CMake build `libmain.so` thay vì file thực thi
-  và raylib dùng `PLATFORM=Android` (OpenGL ES 2 + native_app_glue).
-* APK release được ký bằng khoá debug để cài thử ngay; thay `signingConfig` bằng keystore riêng khi phát hành.
-* **CI**: `.github/workflows/build.yml` tự build APK trên mỗi lần push và đính kèm vào mục *Artifacts*.
+`NativeActivity` nạp `libmain.so`; Gradle gọi chính `CMakeLists.txt` gốc. CI (`.github/workflows/build.yml`) build APK
+mỗi lần push (mục *Artifacts*). APK release ký bằng khoá debug để cài thử; thay keystore khi phát hành.
 
 ### Điều khiển
 | Thao tác | Cảm ứng | PC |
 |---|---|---|
-| Di chuyển bản đồ | kéo 1 ngón (chế độ Quan sát) / kéo 2 ngón | chuột phải/giữa, WASD |
+| Di chuyển bản đồ | kéo 1 ngón (Quan sát) / kéo 2 ngón | chuột phải/giữa, WASD |
 | Phóng to/thu nhỏ | chụm 2 ngón | lăn chuột |
-| Dùng quyền năng | chạm / giữ & kéo (công cụ vẽ) | chuột trái |
-| Xem suy nghĩ sinh vật | chạm vào sinh vật | click |
-| Xem nền văn minh | chạm vào lãnh thổ | click |
-| Tạm dừng / tốc độ | nút ‖ 1x 4x 15x 50x | Space, phím 1–5 |
-| Debug suy nghĩ toàn màn hình | nút "Suy nghĩ" | F1 |
-| Biên niên sử | nút "Biên niên" | Tab |
+| Quyền năng / vẽ | chạm, giữ & kéo | chuột trái |
+| Xem sinh vật / nền văn minh | chạm vào sinh vật / lãnh thổ | click |
+| Tốc độ | ‖ 1x 4x 15x 50x | Space, 1–5 |
+| Debug | *Suy nghĩ*, *Lớp*, *Hoá học*, *Biên niên* | F1, Tab |
 
 ---
 
-## 11. Mở rộng
+## 14. Mở rộng
 
-* **Thêm loài**: thêm một khối trong `SpeciesRegistry::initDefaults` (gen, chế độ ăn, kích thước, màu).
-* **Thêm công nghệ**: thêm vào `enum Tech` + một dòng trong bảng `kTechs` (ngưỡng trí tuệ, kích thích, tiền đề).
-* **Thêm hành động AI**: thêm `ActionId`, một dòng trong `kActions` (pre/effect/cost/yêu cầu) và một `case` trong `exec`.
-  GOAP tự động kết hợp hành động mới vào kế hoạch.
-* **Thêm mục tiêu**: thêm `GoalId`, trạng thái mong muốn trong `kGoalStates`, công thức điểm trong `scoreGoals`.
-* **Thêm công trình**: `enum Building` + `buildingInfo` + sprite 4×4 trong `Renderer.cpp` + quy tắc trong `pickBuilding`.
+* **Vật liệu**: thêm một khối trong `MaterialRegistry::initDefaults` — mọi quy luật hoá học tự áp dụng theo thuộc tính.
+* **Quy luật hoá học**: thêm một khối trong `reactCell` (dựa trên thuộc tính, không phải tên chất).
+* **Hình dạng bộ phận / mục đích**: thêm vào `Shape`/`Purpose` + công thức trong `evaluateDesign` + ràng buộc `canFabricate`.
+* **Khái niệm**: thêm vào `Concept` + nguồn trải nghiệm (`experience(...)`) + hình dạng nó mở khoá (`conceivable`).
+* **Hành động AI**: `ActionId` + dòng trong `kActions` + `case` trong `exec` — GOAP tự ghép vào kế hoạch.
+* **Loài**: `SpeciesRegistry::initDefaults`.

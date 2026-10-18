@@ -8,36 +8,55 @@
 namespace wb {
 
 const BuildingInfo& buildingInfo(Building b) {
+    // Yêu cầu xây dựng là QUY LUẬT VẬT LÝ chứ không phải ô công nghệ: muốn dựng nhà gỗ
+    // phải có công cụ cắt được gỗ (độ cắt ≥ ~2), nhà đá cần công cụ cắt được đá (≥ ~4.5)
+    // hoặc có gạch nung... Ai, ở đâu, bằng vật liệu gì đạt được ngưỡng đó là chuyện mở.
     static const BuildingInfo table[] = {
-        // tên               gỗ đá quặng  tech cần                    chỗ ở  chặn
-        {"Không",             0,  0, 0, -1,                            0, false},
-        {"Hang ổ",            0,  0, 0, ti(Tech::Shelter),             4, false},
-        {"Tổ",                1,  0, 0, -1,                            2, false},
-        {"Lều",               3,  0, 0, ti(Tech::Shelter),             3, false},
-        {"Nhà gỗ",            6,  0, 0, ti(Tech::WoodWorking),         5, false},
-        {"Nhà đá",            2,  6, 0, ti(Tech::Masonry),             8, false},
-        {"Tường thành",       0,  3, 0, ti(Tech::Masonry),             0, true},
-        {"Tháp canh",         2,  6, 0, ti(Tech::Masonry),             0, true},
-        {"Cầu",               4,  0, 0, ti(Tech::Bridges),             0, false},
-        {"Kho lương",         6,  0, 0, ti(Tech::Farming),             0, false},
-        {"Xưởng",             5,  2, 0, ti(Tech::WoodWorking),         0, false},
-        {"Lò rèn",            2,  6, 2, ti(Tech::Metallurgy),          0, false},
-        {"Đền thờ",           4,  6, 0, ti(Tech::Religion),            0, false},
-        {"Toà thị chính",     8,  6, 0, ti(Tech::Law),                 0, false},
-        {"Lâu đài",           4, 16, 4, ti(Tech::Law),                10, true},
-        {"Dấu lãnh thổ",      0,  0, 0, ti(Tech::ScentMarking),        0, false},
-        {"Vật tổ",            2,  0, 0, ti(Tech::Religion),            0, false},
+        // tên               gỗ đá kim  tập quán cần            chỗ ở chặn  cắt≥  cháy được
+        {"Không",             0,  0, 0, -1,                       0, false, 0.0f, false},
+        {"Hang ổ",            0,  0, 0, ti(Tech::Shelter),        4, false, 0.0f, false},
+        {"Tổ",                1,  0, 0, -1,                       2, false, 0.0f, true},
+        {"Lều",               3,  0, 0, ti(Tech::Shelter),        3, false, 0.0f, true},
+        {"Nhà gỗ",            6,  0, 0, ti(Tech::Shelter),        5, false, 2.0f, true},
+        {"Nhà đá",            2,  6, 0, ti(Tech::Shelter),        8, false, 4.5f, false},
+        {"Tường thành",       0,  3, 0, -1,                       0, true,  4.5f, false},
+        {"Tháp canh",         2,  6, 0, -1,                       0, true,  4.5f, false},
+        {"Cầu",               4,  0, 0, -1,                       0, false, 2.0f, true},
+        {"Kho lương",         6,  0, 0, ti(Tech::Farming),        0, false, 2.0f, true},
+        {"Xưởng",             5,  2, 0, -1,                       0, false, 2.0f, true},
+        {"Lò luyện",          0,  6, 0, -1,                       0, false, 0.0f, false},
+        {"Đền thờ",           4,  6, 0, ti(Tech::Religion),       0, false, 2.0f, false},
+        {"Toà thị chính",     8,  6, 0, ti(Tech::Law),            0, false, 2.0f, false},
+        {"Lâu đài",           4, 16, 4, ti(Tech::Law),           10, true,  4.5f, false},
+        {"Dấu lãnh thổ",      0,  0, 0, ti(Tech::ScentMarking),   0, false, 0.0f, false},
+        {"Vật tổ",            2,  0, 0, ti(Tech::Religion),       0, false, 0.0f, true},
+        {"Bếp lửa",           2,  3, 0, -1,                       0, false, 0.0f, false},
     };
     return table[static_cast<int>(b)];
+}
+
+MatId groundMaterial(Terrain t) {
+    switch (t) {
+    case Terrain::DeepWater: case Terrain::ShallowWater: case Terrain::Ice: case Terrain::Snow: return mat::Water;
+    case Terrain::Sand: case Terrain::Desert: return mat::Sand;
+    case Terrain::Hill: case Terrain::Mountain: return mat::Stone;
+    case Terrain::Lava: case Terrain::Basalt: return mat::Basalt;
+    case Terrain::Swamp: return mat::Mud;
+    case Terrain::Ash: return mat::Ash;
+    case Terrain::Glass: return mat::Glass;
+    default: return mat::Dirt;
+    }
 }
 
 void World::generate(int width, int height, uint32_t seed) {
     w_ = width; h_ = height;
     tiles_.assign(w_ * h_, Tile{});
     dirtyFlag_.assign(w_ * h_, 0);
+    dirty_.clear();
     items_.clear();
-    fires_.clear();
-    ValueNoise hN(seed), mN(seed * 7 + 3), tN(seed * 13 + 11), rN(seed * 31 + 5);
+    weather_ = Weather{};
+    materials.initDefaults(seed);
+    ValueNoise hN(seed), mN(seed * 7 + 3), tN(seed * 13 + 11), rN(seed * 31 + 5), oN(seed * 57 + 9);
     Rng rng(seed);
     for (int y = 0; y < h_; ++y)
         for (int x = 0; x < w_; ++x) {
@@ -54,17 +73,60 @@ void World::generate(int width, int height, uint32_t seed) {
             Tile& t = at(x, y);
             t.height = clamp01(hgt);
             classify(x, y, hgt, moist, temp);
-            // tài nguyên
+            // ---- Tài nguyên: gỗ, đá (nhiều loại), quặng (nhiều loại) ----
             float r = rN.fbm(nx * 3, ny * 3, 2);
+            float o = oN.fbm(nx * 2.2f, ny * 2.2f, 2); // "mạch khoáng" quyết định loại quặng theo vùng
             if (t.terrain == Terrain::Forest || t.terrain == Terrain::Jungle) t.wood = static_cast<uint8_t>(120 + rng.irange(0, 120));
             if (t.terrain == Terrain::Hill || t.terrain == Terrain::Mountain) {
                 t.stone = static_cast<uint8_t>(100 + rng.irange(0, 150));
-                if (r > 0.62f) t.ore = static_cast<uint8_t>(60 + rng.irange(0, 150));
+                // Loại đá theo vùng: đá vôi (trầm tích), đá lửa (mạch silic), đá thường
+                t.stoneMat = o < 0.35f ? mat::Limestone : (rng.chance(0.18f) ? mat::Flint : mat::Stone);
+                if (r > 0.6f) {
+                    t.ore = static_cast<uint8_t>(60 + rng.irange(0, 150));
+                    if (o < 0.40f) t.oreMat = mat::CopperOre;
+                    else if (o < 0.52f) t.oreMat = mat::IronOre;
+                    else if (o < 0.60f) t.oreMat = mat::TinOre;
+                    else if (o < 0.64f) t.oreMat = mat::Gold;
+                    else t.oreMat = mat::IronOre;
+                    if (r > 0.74f && !materials.exoticOres.empty())   // mỏ khoáng chất lạ — hiếm
+                        t.oreMat = materials.exoticOres[static_cast<size_t>(o * 100) % materials.exoticOres.size()];
+                }
             }
-            if ((t.terrain == Terrain::Grass || t.terrain == Terrain::Sand) && rng.chance(0.02f)) t.stone = static_cast<uint8_t>(rng.irange(10, 60));
+            if ((t.terrain == Terrain::Grass || t.terrain == Terrain::Sand) && rng.chance(0.02f)) {
+                t.stone = static_cast<uint8_t>(rng.irange(10, 60));
+                t.stoneMat = rng.chance(0.3f) ? mat::Flint : mat::Stone;
+            }
+            if (t.terrain == Terrain::Desert && rng.chance(0.015f)) { t.ore = static_cast<uint8_t>(rng.irange(30, 90)); t.oreMat = mat::Saltpeter; }
             float fert = terrainInfo(t.terrain).fertility;
             if (rng.chance(fert * 0.35f)) t.food = static_cast<uint8_t>(rng.irange(20, 120));
         }
+    // Đất sét ở ven sông/hồ: đất gần nước
+    for (int y = 1; y < h_ - 1; ++y)
+        for (int x = 1; x < w_ - 1; ++x) {
+            Tile& t = at(x, y);
+            if (!terrainInfo(t.terrain).walkable || t.stone > 0) continue;
+            bool nearWater = isWater(x + 1, y) || isWater(x - 1, y) || isWater(x, y + 1) || isWater(x, y - 1);
+            if (nearWater && t.terrain != Terrain::Snow && rng.chance(0.08f)) { t.stone = static_cast<uint8_t>(rng.irange(20, 80)); t.stoneMat = mat::Clay; }
+        }
+    // Núi lửa: vài hồ dung nham trên đỉnh núi, xung quanh có lưu huỳnh & đá vỏ chai
+    int volcanoes = std::max(1, w_ * h_ / 15000);
+    for (int v = 0; v < volcanoes; ++v) {
+        for (int tries = 0; tries < 200; ++tries) {
+            int x = rng.irange(4, w_ - 5), y = rng.irange(4, h_ - 5);
+            if (at(x, y).terrain != Terrain::Mountain) continue;
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx) { at(x + dx, y + dy).terrain = Terrain::Lava; at(x + dx, y + dy).flags |= kTileVolcanic; }
+            for (int dy = -4; dy <= 4; ++dy)
+                for (int dx = -4; dx <= 4; ++dx) {
+                    Tile& t = at(x + dx, y + dy);
+                    if (t.terrain == Terrain::Lava) continue;
+                    if (rng.chance(0.25f)) { t.ore = static_cast<uint8_t>(rng.irange(40, 120)); t.oreMat = mat::Sulfur; }
+                    else if (rng.chance(0.2f)) { t.stone = static_cast<uint8_t>(rng.irange(30, 90)); t.stoneMat = mat::Obsidian; }
+                }
+            break;
+        }
+    }
+    matter.init(*this);
     fullRedraw = true;
 }
 
@@ -106,8 +168,13 @@ float World::moveCost(int x, int y) const {
 }
 
 float World::temperatureAt(int x, int y) const {
-    if (!inBounds(x, y)) return 0;
-    return terrainInfo(at(x, y).terrain).temperature + weather_.seasonTemp * 0.4f;
+    if (!inBounds(x, y)) return 10;
+    return matter.temp(x, y);
+}
+
+bool World::raining(int x, int y) const {
+    return weather_.rainTicks > 0 &&
+           dist2({float(x), float(y)}, {weather_.rainX, weather_.rainY}) < weather_.rainRadius * weather_.rainRadius;
 }
 
 bool World::findNearestTile(int cx, int cy, int r, const std::function<bool(const Tile&, int, int)>& pred,
@@ -169,11 +236,7 @@ void World::setBuilding(int x, int y, Building b) {
 
 void World::ignite(int x, int y) {
     if (!inBounds(x, y) || isWater(x, y)) return;
-    Tile& t = at(x, y);
-    if (t.fire) return;
-    t.fire = 40;
-    fires_.push_back(y * w_ + x);
-    markDirty(x, y);
+    matter.ignite(x, y); // lửa giờ là phản ứng cháy thật: cần nhiên liệu + oxi + nhiệt
 }
 
 void World::update(long tick, Rng& rng) {
@@ -185,7 +248,8 @@ void World::update(long tick, Rng& rng) {
         weather_.rainTicks--;
         weather_.rainX += weather_.rainVX;
         weather_.rainY += weather_.rainVY;
-    } else if (weather_.droughtTicks <= 0 && rng.chance(0.004f)) {
+    } else if (weather_.droughtTicks <= 0 && rng.chance(0.001f + matter.humidity * 0.006f)) {
+        // Chu trình nước: độ ẩm khí quyển (do bốc hơi) càng cao càng dễ mưa
         weather_.rainTicks = rng.irange(150, 400);
         weather_.rainX = rng.range(0, w_); weather_.rainY = rng.range(0, h_);
         weather_.rainRadius = rng.range(15, 35);
@@ -200,12 +264,16 @@ void World::update(long tick, Rng& rng) {
         int x = rng.irange(0, w_ - 1), y = rng.irange(0, h_ - 1);
         Tile& t = at(x, y);
         float fert = terrainInfo(t.terrain).fertility * growth;
-        bool raining = weather_.rainTicks > 0 && dist2({float(x), float(y)}, {weather_.rainX, weather_.rainY}) < weather_.rainRadius * weather_.rainRadius;
-        if (raining) fert *= 2.0f;
+        if (raining(x, y)) fert *= 2.0f;
+        // Chu trình carbon: cây quang hợp hấp thụ CO₂ khí quyển; CO₂ cao → cây mọc nhanh hơn chút
+        fert *= 0.8f + std::min(0.6f, matter.atmosCO2 / 1400.0f);
         if (t.fire) continue;
         if (t.food < 200 && rng.chance(fert * 0.6f)) t.food = static_cast<uint8_t>(std::min(255, t.food + 12));
         if (t.terrain == Terrain::Farmland && t.food < 250) t.food = static_cast<uint8_t>(std::min(255, t.food + 20));
-        if ((t.terrain == Terrain::Forest || t.terrain == Terrain::Jungle) && t.wood < 230 && rng.chance(0.5f)) t.wood += 10;
+        if ((t.terrain == Terrain::Forest || t.terrain == Terrain::Jungle) && t.wood < 230 && rng.chance(0.5f)) {
+            t.wood += 10;
+            matter.atmosCO2 = std::max(150.0f, matter.atmosCO2 - 0.002f);
+        }
         // Rừng lan sang đồng cỏ bên cạnh rất chậm; tro tàn hồi phục thành cỏ
         if (t.terrain == Terrain::Ash && rng.chance(0.05f)) setTerrain(x, y, Terrain::Grass);
         if (t.terrain == Terrain::Grass && t.building == Building::None && t.owner < 0 && rng.chance(0.004f * fert)) {
@@ -216,52 +284,33 @@ void World::update(long tick, Rng& rng) {
         if (t.terrain == Terrain::Forest && t.wood < 5) setTerrain(x, y, Terrain::Grass);
     }
 
-    // ---- Lửa: cháy, lan sang ô dễ cháy, bị mưa dập ----
-    std::vector<int> next;
-    next.reserve(fires_.size());
-    for (int idx : fires_) {
-        int x = idx % w_, y = idx / w_;
-        Tile& t = tiles_[idx];
-        if (!t.fire) continue;
-        bool raining = weather_.rainTicks > 0 && dist2({float(x), float(y)}, {weather_.rainX, weather_.rainY}) < weather_.rainRadius * weather_.rainRadius;
-        t.fire = raining ? 0 : static_cast<uint8_t>(t.fire - 1);
-        if (t.wood > 0) t.wood = static_cast<uint8_t>(std::max(0, t.wood - 6));
-        t.food = 0;
-        if (t.fire == 0) {
-            if (t.terrain == Terrain::Forest || t.terrain == Terrain::Jungle || t.terrain == Terrain::Grass || t.terrain == Terrain::Savanna)
-                setTerrain(x, y, Terrain::Ash);
-            if (t.building != Building::None && t.building != Building::Wall && t.building != Building::StoneHouse && t.building != Building::Castle)
-                setBuilding(x, y, Building::None);
-            markDirty(x, y);
-            continue;
-        }
-        next.push_back(idx);
-        if (rng.chance(0.08f)) {
-            int nx = x + rng.irange(-1, 1), ny = y + rng.irange(-1, 1);
-            if (inBounds(nx, ny)) {
-                Tile& n = at(nx, ny);
-                bool flammable = n.wood > 20 || n.terrain == Terrain::Grass || n.terrain == Terrain::Savanna ||
-                                 (n.building != Building::None && n.building != Building::Wall && n.building != Building::StoneHouse);
-                if (flammable && !n.fire && !isWater(nx, ny)) { n.fire = 40; next.push_back(ny * w_ + nx); markDirty(nx, ny); }
-            }
-        }
-    }
-    fires_.swap(next);
-    burning_ = static_cast<int>(fires_.size());
-    // Sét đánh ngẫu nhiên khi trời mưa → nguồn lửa tự nhiên (giúp sinh vật "phát hiện" lửa)
+    // ---- Sét: nhiệt độ cục bộ ~3000°C → cháy rừng, nung chảy cát thành thuỷ tinh ----
     if (weather_.rainTicks > 0 && rng.chance(0.01f)) {
         int x = static_cast<int>(weather_.rainX + rng.range(-weather_.rainRadius, weather_.rainRadius));
         int y = static_cast<int>(weather_.rainY + rng.range(-weather_.rainRadius, weather_.rainRadius));
-        ignite(x, y);
+        if (inBounds(x, y)) matter.setTemp(x, y, 3000);
     }
     // Hạn hán + nóng → cháy rừng tự phát
     if (weather_.droughtTicks > 0 && rng.chance(0.02f)) ignite(rng.irange(0, w_ - 1), rng.irange(0, h_ - 1));
+
+    // ---- Vật lý & hoá học: nhiệt, lửa, chất lỏng, khí, phản ứng, chu trình vật chất ----
+    matter.update(*this, tick, rng);
 
     // ---- Vật phẩm mục rữa ----
     if (tick % 10 == 0) {
         for (auto& it : items_) {
             it.age += 10;
-            if (it.kind == ItemKind::Corpse && it.age > 400) { it.kind = ItemKind::Bones; it.amount = 1; }
+            if (it.kind == ItemKind::Corpse && it.age > 400) {
+                // Phân huỷ: thịt → đất mùn (đất màu mỡ hơn) + khí mê-tan — chu trình dinh dưỡng
+                it.kind = ItemKind::Bones; it.amount = 1;
+                Tile& t = at(it.x, it.y);
+                t.food = static_cast<uint8_t>(std::min(255, t.food + 40));
+                matter.addGas(it.x, it.y, mat::Methane, 4);
+                ReactionEvent ev;
+                ev.tick = tick; ev.x = it.x; ev.y = it.y; ev.kind = ReactionKind::Decay;
+                ev.in[0] = mat::Flesh; ev.out[0] = mat::Dirt; ev.out[1] = mat::Methane; ev.temp = matter.temp(it.x, it.y);
+                matter.emit(ev);
+            }
         }
         items_.erase(std::remove_if(items_.begin(), items_.end(), [](const GroundItem& it) {
                          return it.amount <= 0 || (it.kind == ItemKind::Bones && it.age > 3000) ||

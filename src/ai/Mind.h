@@ -19,6 +19,8 @@
 #include "Memory.h"
 #include "Knowledge.h"
 #include "Goap.h"
+#include "Invention.h"
+#include "../phys/Physics.h"
 #include "../world/Terrain.h"
 #include <cstdio>
 #include <cstdarg>
@@ -86,6 +88,23 @@ struct Mind {
     Spot seenFood, seenTree, seenStone, seenOre, seenCorpse, seenTool, seenFire, blockedWater, seenRuin;
     // Kích thích phát hiện trong pha think (song song) → xử lý phát minh ở pha act (tuần tự)
     std::array<uint8_t, kStimulusCount> pendingStim{};
+
+    // ---- Tri thức vật chất mở (khái niệm, vật liệu, thiết kế, quy trình) ----
+    Knowhow know;
+    Purpose craftPurpose = Purpose::Cut;      // đang muốn chế tạo/thiết kế cho mục đích nào
+    // Ý tưởng sáng tạo đang theo đuổi (nghĩ ra trước, rồi mới đi kiếm vật liệu làm thử)
+    std::vector<Part> idea;
+    Purpose ideaPurpose = Purpose::Cut;
+    int ideaParent = -1;
+    bool hasIdea = false;
+    std::array<long, kPurposeCount> craftBlockedUntil{};   // tạm gác chế tạo khi không kiếm nổi vật liệu
+    int processChoice = -1;                   // quy trình định chạy ở lò
+    // Sự kiện vật lý/hoá học quan sát được ở pha think → học ở pha act
+    std::array<ReactionEvent, 3> seenReactions{};
+    int seenReactionCount = 0;
+    std::array<std::pair<uint8_t, MatId>, 3> seenPhys{};
+    int seenPhysCount = 0;
+    long lastShot = 0;
 
     long lastSocialTick = 0, lastMarkTick = 0, lastWorshipTick = 0, lastExploreTick = 0;
     int lastDiscovery = -1;

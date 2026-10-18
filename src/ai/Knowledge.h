@@ -1,14 +1,16 @@
 // =============================================================================
-// Knowledge.h — Cây công nghệ / tri thức có thể "tự khám phá".
+// Knowledge.h — TẬP QUÁN VĂN HOÁ / XÃ HỘI (meme) có thể tự phát sinh.
 //
-// Không có ai "dạy sẵn" công nghệ. Mỗi Tech có:
-//   * điều kiện tiên quyết (prereq)  — phải biết trước tech khác
-//   * ngưỡng trí tuệ tối thiểu        — sinh vật đủ thông minh mới hiểu được
-//   * "kích thích" (stimulus)        — thứ sinh vật phải QUAN SÁT hoặc TRẢI NGHIỆM
-//                                      (thấy lửa, cầm đá + gỗ, săn chung với bầy...)
-// Khi cá thể tích luỹ đủ "exposure" (số lần tiếp xúc kích thích) thì có xác suất
-// phát minh ra tech, tỷ lệ với trí tuệ và tính tò mò. Tri thức lan truyền qua
-// dạy học trong nhóm và truyền cho con cái (di truyền văn hoá).
+// LƯU Ý THIẾT KẾ: đây KHÔNG phải cây công nghệ. Công nghệ vật chất (công cụ, vũ
+// khí, máy móc, luyện kim, hoá chất…) là hệ thống MỞ, không giới hạn — xem
+// ai/Invention.h (khái niệm vật lý, thiết kế, quy trình hoá học).
+//
+// Ở đây chỉ còn các hành vi xã hội rời rạc mà một nhóm "có" hoặc "chưa có":
+// săn theo bầy, thứ bậc, ngôn ngữ, tôn giáo, luật pháp... Mỗi tập quán có:
+//   * ngưỡng trí tuệ tối thiểu, tiền đề (tập quán khác)
+//   * "kích thích" phải trải nghiệm đủ nhiều lần
+// Khi đủ điều kiện, cá thể có xác suất nảy ra ý tưởng (tỷ lệ trí tuệ × tò mò),
+// rồi lan truyền qua dạy học, thừa hưởng, giao lưu văn hoá.
 // =============================================================================
 #pragma once
 #include <cstdint>
@@ -20,20 +22,12 @@ enum class Tech : uint8_t {
     PackHunting,   // săn theo bầy (động vật cũng học được)
     ScentMarking,  // đánh dấu lãnh thổ
     Hierarchy,     // thứ bậc xã hội / con đầu đàn
-    FireUse,       // sử dụng lửa (nấu chín, sưởi ấm)
-    StoneTools,    // công cụ đá sơ khai
     Shelter,       // hang ổ / lều tạm
     Language,      // ngôn ngữ (gọi nhau, truyền tri thức nhanh hơn)
-    Weapons,       // vũ khí (giáo, cung)
-    WoodWorking,   // chế biến gỗ → nhà gỗ
     Farming,       // trồng trọt
-    Mining,        // khai thác quặng
-    Masonry,       // xây đá → tường, nhà đá
-    Metallurgy,    // luyện kim → công cụ/vũ khí kim loại
     Religion,      // tôn giáo / tín ngưỡng
-    Writing,       // chữ viết → lưu trữ tri thức
+    Writing,       // chữ viết → lưu trữ tri thức (kể cả thiết kế & quy trình)
     Law,           // luật pháp / thể chế nhà nước
-    Bridges,       // xây cầu qua nước
     Count
 };
 constexpr int kTechCount = static_cast<int>(Tech::Count);

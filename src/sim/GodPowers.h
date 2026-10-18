@@ -16,6 +16,12 @@ enum class Power : uint8_t {
     Blessing,                                   // ban phước: tăng trí tuệ + sức khoẻ
     Smite,                                      // trừng phạt: giết sinh vật trong vùng
     Spawn,                                      // thả sinh vật (loài chọn riêng)
+    // ---- Vật chất (vật lý & hoá học) ----
+    PourWater, PourLava, PourAcid, PourOil,     // đổ chất lỏng — chảy theo địa hình, phản ứng thật
+    Gunpowder,                                  // rắc thuốc súng (châm lửa → nổ)
+    HeatUp, CoolDown,                           // đốt nóng / làm lạnh vùng (°C)
+    Boulder,                                    // ném tảng đá (vật thể vật lý: rơi, nảy, lăn)
+    OreVein,                                    // tạo mạch quặng
     Count
 };
 

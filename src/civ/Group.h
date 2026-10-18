@@ -10,6 +10,7 @@
 #pragma once
 #include "Language.h"
 #include "../ai/Knowledge.h"
+#include "../ai/Invention.h"
 #include "../core/Ecs.h"
 #include <string>
 #include <vector>
@@ -67,6 +68,7 @@ struct Relation {
 };
 
 struct Group {
+    Group() { bestDesign.fill(-1); }
     int id = -1;
     bool alive = true;
     int species = 0;
@@ -93,7 +95,46 @@ struct Group {
     int territoryTiles = 0;
 
     // Kho chung
-    int food = 0, wood = 0, stone = 0, ore = 0;
+    int food = 0, wood = 0, stone = 0;
+    std::map<MatId, int> mats;   // vật liệu khác (quặng, kim loại, than, gạch, muối, hoá chất…)
+    int matCount(MatId m) const {
+        if (m == mat::Wood) return wood;
+        if (m == mat::Stone) return stone;
+        auto it = mats.find(m);
+        return it == mats.end() ? 0 : it->second;
+    }
+    void addMat(MatId m, int n) {
+        if (m == kNoMat || n <= 0) return;   // "không khí" không phải vật liệu cất kho
+        if (m == mat::Wood) wood += n;
+        else if (m == mat::Stone) stone += n;
+        else mats[m] += n;
+    }
+    int takeMat(MatId m, int n) {
+        int have = matCount(m), t = std::min(have, n);
+        if (t <= 0) return 0;
+        if (m == mat::Wood) wood -= t;
+        else if (m == mat::Stone) stone -= t;
+        else if ((mats[m] -= t) <= 0) mats.erase(m);
+        return t;
+    }
+    int metalStock(const MaterialRegistry& reg) const {
+        int n = 0;
+        for (auto& [m, c] : mats) if (reg[m].metal) n += c;
+        return n;
+    }
+
+    // Tri thức vật chất tập thể (hợp của các thành viên; có chữ viết thì không thất truyền)
+    ConceptSet concepts;
+    std::vector<MatId> materials;
+    std::vector<int> designs, processes;
+    std::array<int, kPurposeCount> bestDesign{};
+    float techLevel = 0;          // trình độ công nghệ liên tục, KHÔNG có trần
+    std::string era = "Thời đại Tay không";
+    MatId eraMat = kNoMat;
+    // Bếp lửa / lò luyện của nhóm (nguồn nhiệt thật trong MatterGrid)
+    bool hasHearth = false;
+    int hearthX = -1, hearthY = -1, forgeX = -1, forgeY = -1;
+    float forgeHeat = 0;
 
     // Công trình (đếm lại định kỳ)
     int dwellings = 0, housing = 0, buildingsTotal = 0;

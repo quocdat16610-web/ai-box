@@ -34,10 +34,21 @@ int main() {
         if (const char* z = std::getenv("WB_ZOOM")) app.cam.zoom *= static_cast<float>(std::atof(z));
         if (const char* pre = std::getenv("WB_PRESIM")) for (int i = 0, n = std::atoi(pre); i < n; ++i) app.sim->step();
         if (std::getenv("WB_DEBUG")) app.opt.debugThoughts = true;
+        if (const char* l = std::getenv("WB_LAYER")) app.opt.layer = static_cast<wb::Layer>(std::atoi(l) % static_cast<int>(wb::Layer::Count));
+        if (const char* pn = std::getenv("WB_PANEL")) {
+            std::string v = pn;
+            if (v == "chem") app.panel = wb::SidePanel::Chemistry;
+            if (v == "none") app.panel = wb::SidePanel::None;
+        }
+        if (const char* gx = std::getenv("WB_GOTO_FORGE")) {
+            (void)gx;   // bay camera tới lò luyện đầu tiên (minh hoạ hoá học trong lò)
+            for (auto& g : app.sim->groups)
+                if (g.alive && g.forgeX >= 0) { app.cam.target = {(g.forgeX + 0.5f) * wb::kTileWorld, (g.forgeY + 0.5f) * wb::kTileWorld}; app.cam.zoom = 5; break; }
+        }
     }
     int frame = 0;
     while (!WindowShouldClose()) {
-        if (autostart && std::getenv("WB_SELECT") && frame == 2 && !app.sim->agents.empty()) {
+        if (autostart && std::getenv("WB_SELECT") && !std::getenv("WB_GOTO_FORGE") && frame == 2 && !app.sim->agents.empty()) {
             // chọn sinh vật thông minh nhất để minh hoạ bảng "suy nghĩ"
             wb::Entity best = app.sim->agents.front();
             for (wb::Entity e : app.sim->agents)

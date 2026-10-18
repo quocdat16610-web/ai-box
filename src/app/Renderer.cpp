@@ -39,6 +39,7 @@ const char* buildingSprite(Building b) {
     case Building::Castle:     return "SFFS""SSSS""SKKS""SDDS";
     case Building::ScentMark:  return "....""..y.""....""....";
     case Building::Totem:      return ".T..""FTF."".T.."".T..";
+    case Building::Hearth:     return "....""sOOs""sOOs""....";
     default: return nullptr;
     }
 }
@@ -129,6 +130,15 @@ void Renderer::paintTile(Simulation& sim, int x, int y) {
             case Terrain::Lava:
                 if (h % 5 == 0) c = rgb(255, 200, 60);
                 break;
+            case Terrain::Ice:
+                if (h % 9 == 0) c = rgb(245, 252, 255);
+                break;
+            case Terrain::Glass:
+                if (h % 4 == 0) c = rgb(230, 255, 255);
+                break;
+            case Terrain::Basalt:
+                if (h % 6 == 0) c = rgb(95, 90, 100);
+                break;
             case Terrain::Ash:
                 if (h % 7 == 0) c = rgb(130, 125, 120);
                 break;
@@ -137,8 +147,15 @@ void Renderer::paintTile(Simulation& sim, int x, int y) {
             }
             // Quả mọng, đá, quặng lộ thiên
             if (t.food > 140 && t.terrain != Terrain::Farmland && pxl == 2 && py == 2 && (h & 1)) c = rgb(200, 40, 60);
-            if (t.ore > 40 && h % 6 == 0) c = rgb(230, 190, 60);
-            if (t.stone > 40 && t.terrain != Terrain::Mountain && t.terrain != Terrain::Hill && pxl == 1 && py == 2) c = rgb(150, 150, 150);
+            if (t.ore > 40 && h % 6 == 0) {
+                // màu mạch quặng theo đúng loại khoáng chất
+                const MaterialDef& od = sim.world.materials[t.oreMat == kNoMat ? static_cast<MatId>(mat::CopperOre) : t.oreMat];
+                c = rgb(od.r, od.g, od.b);
+            }
+            if (t.stone > 15 && t.terrain != Terrain::Mountain && t.terrain != Terrain::Hill && pxl == 1 && py == 2) {
+                const MaterialDef& sd = sim.world.materials[t.stoneMat];
+                c = rgb(sd.r, sd.g, sd.b);
+            }
             // Lãnh thổ: phủ màu nhóm + viền
             if (t.owner >= 0) {
                 c = mix(c, owner, 0.18f);
@@ -225,6 +242,74 @@ void Renderer::drawWorld(Simulation& sim, const Camera2D& cam, const RenderOptio
     }
     if (w.droughtTicks > 0) DrawRectangle(0, 0, static_cast<int>(w_ * S), static_cast<int>(h_ * S), Color{255, 180, 60, 25});
 
+    // ---- Lớp vật chất: chất lỏng, vật chất rời, khí (chỉ trong khung nhìn) ----
+    const MatterGrid& G = sim.world.matter;
+    const MaterialRegistry& R = sim.world.materials;
+    for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x) {
+            const MatterCell& c = G.cell(x, y);
+            float T = G.temp(x, y);
+            for (const MatterSlot& ms : c.s) {
+                if (ms.empty()) continue;
+                const MaterialDef& d = R[ms.mat];
+                Phase ph = d.phaseAt(T);
+                Color col{d.r, d.g, d.b, 255};
+                if (T > 500) col = Color{255, static_cast<unsigned char>(std::clamp(T / 6.0f, 60.0f, 220.0f)), 40, 255}; // vật nóng đỏ rực
+                if (ph == Phase::Liquid) {
+                    float a = std::min(1.0f, ms.amount / 40.0f);
+                    col.a = static_cast<unsigned char>(90 + 140 * a);
+                    DrawRectangleV({x * S, y * S}, {S, S}, col);
+                } else {
+                    int dots = std::min(6, 1 + ms.amount / 6);
+                    for (int k = 0; k < dots; ++k) {
+                        uint32_t h = hash32(static_cast<uint32_t>(x * 977 + y * 131 + k * 7 + ms.mat));
+                        DrawRectangleV({x * S + (h % 7), y * S + ((h >> 4) % 7)}, {1.5f, 1.5f}, col);
+                    }
+                }
+            }
+            if (!c.gas.empty() && (opt.layer == Layer::Gas || c.gas.amount > 30)) {
+                const MaterialDef& d = R[c.gas.mat];
+                unsigned char a = static_cast<unsigned char>(std::min(160, c.gas.amount * (opt.layer == Layer::Gas ? 4 : 1)));
+                Color gc = c.gas.mat == mat::Water ? Color{240, 240, 250, a} : Color{d.r, d.g, d.b, a};
+                DrawRectangleV({x * S, y * S}, {S, S}, gc);
+            }
+            if (c.heatTarget > 0) {   // lò / bếp đang cháy
+                float f = std::sin(time * 9 + x) * 0.5f + 0.5f;
+                DrawRectangleV({x * S + 2, y * S + 2}, {S - 4, S - 4}, Color{255, static_cast<unsigned char>(120 + f * 100), 30, 180});
+            }
+            // Lớp nhiệt độ: xanh (lạnh) → xanh lá (ôn hoà) → vàng → đỏ → trắng (cực nóng)
+            if (opt.layer == Layer::Heat) {
+                Color hc;
+                if (T < 0) hc = Color{60, 120, 255, static_cast<unsigned char>(std::min(170.0f, 80 - T * 4))};
+                else if (T < 30) hc = Color{60, 200, 120, 60};
+                else if (T < 150) hc = Color{240, 220, 60, 110};
+                else if (T < 700) hc = Color{240, 90, 30, 160};
+                else hc = Color{255, 245, 220, 200};
+                DrawRectangleV({x * S, y * S}, {S, S}, hc);
+            }
+            if (opt.layer == Layer::Gas && !c.gas.empty()) {
+                float p = G.pressure(x, y);
+                if (p > 1.5f) DrawRectangleLinesEx({x * S, y * S, S, S}, 1, Color{255, 60, 60, static_cast<unsigned char>(std::min(255.0f, (p - 1) * 80))});
+            }
+        }
+    // ---- Vật thể vật lý: bóng đổ trên mặt đất + vật ở độ cao z ----
+    for (const PhysBody& b : sim.physics.bodies) {
+        float px = b.pos.x * S, py = b.pos.y * S;
+        if (px < tl.x - 8 || py < tl.y - 8 || px > br.x + 8 || py > br.y + 8) continue;
+        float r = std::max(1.0f, b.radius * S);
+        DrawEllipse(static_cast<int>(px), static_cast<int>(py), r, r * 0.5f, Color{0, 0, 0, 90}); // bóng
+        const MaterialDef& d = R[b.mat];
+        Color col = b.temp > 400 ? Color{255, 140, 40, 255} : Color{d.r, d.g, d.b, 255};
+        float lift = b.z * S * 0.5f;   // độ cao hiển thị bằng cách dịch lên (giả 3D)
+        if (b.kind == BodyKind::Projectile) {
+            Vec2 v = b.vel.normalized();
+            DrawLineEx({px - v.x * 4, py - lift - v.y * 4}, {px + v.x * 4, py - lift + v.y * 4}, 1.2f, col);
+        } else {
+            DrawCircleV({px, py - lift}, r, col);
+            DrawCircleLinesV({px, py - lift}, r, Color{0, 0, 0, 120});
+        }
+    }
+
     // Sinh vật
     for (Entity e : sim.agents) {
         const Transform& tr = sim.reg.get<Transform>(e);
@@ -244,7 +329,7 @@ void Renderer::drawWorld(Simulation& sim, const Camera2D& cam, const RenderOptio
             Color cloth = so.group >= 0 ? groupColor(sim, so.group) : shade(c, -50);
             DrawRectangleV({px - 1.5f * sz, py - 1.0f * sz + bob}, {3 * sz, 3 * sz}, cloth);
             DrawRectangleV({px - 1.0f * sz, py - 3.0f * sz + bob}, {2 * sz, 2 * sz}, c);
-            if (sim.reg.get<Inventory>(e).weaponTier > 0) DrawRectangleV({px + 1.5f * sz, py - 3 * sz + bob}, {0.7f, 4 * sz}, Color{200, 200, 210, 255});
+            if (heldValue(sim, e, Purpose::Pierce) > 0 || heldValue(sim, e, Purpose::Ranged) > 0) DrawRectangleV({px + 1.5f * sz, py - 3 * sz + bob}, {0.7f, 4 * sz}, Color{200, 200, 210, 255});
         } else {
             // Dạng thú: thân ngang + đầu
             DrawRectangleV({px - 2.2f * sz, py - 1.0f * sz + bob}, {4.4f * sz, 2.4f * sz}, shade(c, -15));
@@ -288,6 +373,25 @@ void Renderer::drawOverlay(Simulation& sim, const Camera2D& cam, const RenderOpt
             if (g.atWar()) DrawRectangle(static_cast<int>(bx + 3), static_cast<int>(by + 3 + fs * 0.7f), static_cast<int>(fs * 0.9f), 2, RED);
             ui::drawText(label, bx + fs * 1.2f + 4, by + 3, fs, g.stage == Stage::Nation ? GOLD : RAYWHITE);
         }
+    // Nhãn phản ứng hoá học đang diễn ra (lớp "Phản ứng" hoặc khi phóng to)
+    if (opt.layer == Layer::Reactions || cam.zoom >= 3.0f) {
+        int shown = 0;
+        const auto& rec = sim.world.matter.recent();
+        for (auto it = rec.rbegin(); it != rec.rend() && shown < 14; ++it) {
+            long age = sim.tick - it->tick;
+            if (age > 200) break;
+            Vector2 sp = GetWorldToScreen2D({(it->x + 0.5f) * S, (it->y + 0.5f) * S}, cam);
+            if (sp.x < 0 || sp.y < 0 || sp.x > GetScreenWidth() || sp.y > GetScreenHeight()) continue;
+            std::string t = std::string(reactionName(it->kind)) + ": " + it->describe(sim.world.materials);
+            float f = fs * 0.75f;
+            unsigned char a = static_cast<unsigned char>(255 - age);
+            float tw = ui::measureText(t, f);
+            DrawRectangleRounded({sp.x - 3, sp.y - f - 18 - shown % 3 * 4, tw + 6, f + 4}, 0.3f, 4, Color{20, 10, 30, static_cast<unsigned char>(a * 0.7f)});
+            ui::drawText(t, sp.x, sp.y - f - 16 - shown % 3 * 4, f, Color{255, 210, 120, a});
+            DrawCircleV(sp, 3, Color{255, 200, 80, a});
+            shown++;
+        }
+    }
     // Bong bóng suy nghĩ
     auto bubble = [&](Entity e, bool full) {
         const Transform& tr = sim.reg.get<Transform>(e);

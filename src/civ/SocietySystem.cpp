@@ -156,6 +156,7 @@ void SocietySystem::updateGroup(Group& g) {
     if (g.stage >= Stage::Tribe)
         for (Entity e : g.members) Brain::stimulate(sim_, e, Stimulus::Settled, 2);
 
+    aggregateKnowhow(g);
     recountBuildings(g);
     claimTerritory(g);
     assignRoles(g);
@@ -194,6 +195,9 @@ void SocietySystem::chooseLeader(Group& g) {
 void SocietySystem::recountBuildings(Group& g) {
     g.dwellings = g.housing = g.buildingsTotal = 0;
     g.hasGranary = g.hasWorkshop = g.hasForge = g.hasTemple = g.hasTownHall = false;
+    int oldHx = g.hearthX, oldHy = g.hearthY, oldFx = g.forgeX, oldFy = g.forgeY;
+    g.hasHearth = false;
+    g.hearthX = g.hearthY = g.forgeX = g.forgeY = -1;
     int R = std::max(6, g.territoryRadius + 2);
     for (int y = g.homeY - R; y <= g.homeY + R; ++y)
         for (int x = g.homeX - R; x <= g.homeX + R; ++x) {
@@ -206,11 +210,93 @@ void SocietySystem::recountBuildings(Group& g) {
             switch (t.building) {
             case Building::Granary: g.hasGranary = true; break;
             case Building::Workshop: g.hasWorkshop = true; break;
-            case Building::Forge: g.hasForge = true; break;
+            case Building::Forge: g.hasForge = true; g.forgeX = x; g.forgeY = y; break;
+            case Building::Hearth: g.hasHearth = true; g.hearthX = x; g.hearthY = y; break;
             case Building::Temple: case Building::Totem: g.hasTemple = true; break;
             case Building::TownHall: case Building::Castle: g.hasTownHall = true; break;
             default: break;
             }
+        }
+    // ---- Bếp & lò là NGUỒN NHIỆT THẬT trong lưới vật chất, đốt nhiên liệu của kho chung ----
+    MatterGrid& G = sim_.world.matter;
+    if (oldHx >= 0 && (oldHx != g.hearthX || oldHy != g.hearthY)) G.clearHeatSource(oldHx, oldHy);
+    if (oldFx >= 0 && (oldFx != g.forgeX || oldFy != g.forgeY)) G.clearHeatSource(oldFx, oldFy);
+    if (g.hasHearth) {
+        if (g.wood > 0) { g.wood--; G.setHeatSource(g.hearthX, g.hearthY, 750, g.id); }
+        else G.clearHeatSource(g.hearthX, g.hearthY);   // hết củi → tắt lửa
+    }
+    if (g.forgeX >= 0) {
+        // Nhiệt độ lò = thiết kế lò tốt nhất nhóm biết; than củi cháy nóng hơn gỗ (+150°C)
+        float best = 0;
+        if (g.bestDesign[static_cast<int>(Purpose::Heat)] >= 0) best = sim_.designs[g.bestDesign[static_cast<int>(Purpose::Heat)]].value(Purpose::Heat);
+        g.forgeHeat = std::max(g.forgeHeat, best);
+        float heat = g.forgeHeat;
+        if (g.takeMat(mat::Charcoal, 1) > 0) heat += 150;
+        else if (g.wood >= 2) g.wood -= 2;
+        else heat = 0;
+        if (heat > 0) G.setHeatSource(g.forgeX, g.forgeY, heat, g.id);
+        else G.clearHeatSource(g.forgeX, g.forgeY);
+    }
+}
+
+// Tổng hợp tri thức vật chất của nhóm + đo trình độ công nghệ + đặt tên thời đại.
+void SocietySystem::aggregateKnowhow(Group& g) {
+    const MaterialRegistry& R = sim_.world.materials;
+    ConceptSet cs;
+    std::vector<MatId> mats;
+    std::vector<int> designs, procs;
+    std::array<int, kPurposeCount> best;
+    best.fill(-1);
+    auto addU = [](auto& v, auto x) { if (std::find(v.begin(), v.end(), x) == v.end()) v.push_back(x); };
+    bool writing = g.knowledge.test(ti(Tech::Writing));
+    if (writing) { cs = g.concepts; mats = g.materials; designs = g.designs; procs = g.processes; } // chữ viết lưu giữ tri thức cũ
+    for (Entity e : g.members) {
+        const Knowhow& K = sim_.reg.get<Mind>(e).know;
+        cs |= K.concepts;
+        for (MatId m : K.materials) addU(mats, m);
+        for (int d : K.designs) addU(designs, d);
+        for (int p : K.processes) addU(procs, p);
+    }
+    for (int d : designs)
+        for (int p = 0; p < kPurposeCount; ++p) {
+            Purpose pp = static_cast<Purpose>(p);
+            float v = sim_.designs[d].value(pp);
+            if (v > 0 && (best[p] < 0 || v > sim_.designs[best[p]].value(pp))) best[p] = d;
+        }
+    // Tri thức thất truyền khi người biết cuối cùng chết (nếu không có chữ viết)
+    if (!writing && g.stage >= Stage::Tribe)
+        for (int d : g.designs)
+            if (std::find(designs.begin(), designs.end(), d) == designs.end() &&
+                std::find(g.bestDesign.begin(), g.bestDesign.end(), d) != g.bestDesign.end())   // chỉ báo khi mất thứ tốt nhất
+                sim_.chronicle.add(sim_.tick, EventKind::Society, g.displayName() + " đã quên cách làm \"" + sim_.designs[d].name + "\"", g.homeX, g.homeY);
+    g.concepts = cs; g.materials = mats; g.designs = designs; g.processes = procs; g.bestDesign = best;
+    // Trình độ công nghệ: tổng log hiệu năng tốt nhất từng mục đích + độ rộng tri thức. Không có trần:
+    // vật liệu mới, hợp kim mới, thiết kế tốt hơn luôn làm nó tăng tiếp.
+    float tl = 0;
+    for (int p = 0; p < kPurposeCount; ++p)
+        if (best[p] >= 0) tl += std::log2(1.0f + sim_.designs[best[p]].value(static_cast<Purpose>(p)) * (p == static_cast<int>(Purpose::Heat) ? 0.01f : 1.0f)) * 2.0f;
+    tl += mats.size() * 0.3f + procs.size() * 0.8f + cs.count() * 0.5f;
+    g.techLevel = tl;
+    // Thời đại = vật liệu "tiên tiến" nhất đang làm công cụ chính
+    MatId eraMat = kNoMat;
+    float adv = -1;
+    for (int p = 0; p < kPurposeCount; ++p) {
+        if (best[p] < 0 || p == static_cast<int>(Purpose::Heat) || p == static_cast<int>(Purpose::Warmth) || p == static_cast<int>(Purpose::FireStart)) continue;
+        MatId m = sim_.designs[best[p]].mainMat;
+        if (m != kNoMat && R.advancement(m) > adv) { adv = R.advancement(m); eraMat = m; }
+    }
+    if (eraMat != g.eraMat) {
+        g.eraMat = eraMat;
+        g.era = eraName(R, eraMat);
+        if (g.stage >= Stage::Tribe && eraMat != kNoMat) announce(g, (std::string("bước vào ") + g.era).c_str());
+    }
+    // Có chữ viết: thành viên đọc được "sách" của nhóm — thiết kế & quy trình không mất đi
+    if (writing)
+        for (Entity e : g.members) {
+            Mind& m = sim_.reg.get<Mind>(e);
+            if (m.intellect < 0.35f || !m.rng.chance(0.15f)) continue;
+            if (!designs.empty()) m.know.learnDesign(sim_.designs, designs[m.rng.irange(0, static_cast<int>(designs.size()) - 1)]);
+            if (!procs.empty()) m.know.learnProcess(procs[m.rng.irange(0, static_cast<int>(procs.size()) - 1)]);
         }
 }
 
@@ -323,7 +409,7 @@ void SocietySystem::advanceStage(Group& g) {
             next = Stage::Town;
         break;
     case Stage::Town:
-        if (animal ? (pop >= 30 && knows(g, Tech::Law)) : (pop >= 40 && g.dwellings >= 12 && knows(g, Tech::Masonry)))
+        if (animal ? (pop >= 30 && knows(g, Tech::Law)) : (pop >= 40 && g.dwellings >= 12 && g.techLevel >= 12.0f))
             next = Stage::City;
         break;
     default: break;
@@ -483,8 +569,12 @@ void SocietySystem::diplomacy() {
                     for (int y = b.homeY - R; y <= b.homeY + R; ++y)
                         for (int x = b.homeX - R; x <= b.homeX + R; ++x)
                             if (sim_.world.inBounds(x, y) && sim_.world.at(x, y).owner == b.id) { sim_.world.at(x, y).owner = static_cast<int16_t>(a.id); sim_.world.markDirty(x, y); }
-                    a.food += b.food; a.wood += b.wood; a.stone += b.stone; a.ore += b.ore;
+                    a.food += b.food; a.wood += b.wood; a.stone += b.stone;
+                    for (auto& [mt, n] : b.mats) a.mats[mt] += n;
                     a.knowledge |= b.knowledge; // học được tri thức của kẻ bại trận
+                    // Kẻ thắng thu chiến lợi phẩm: vũ khí, công cụ, quy trình của bên thua
+                    if (sim_.reg.valid(a.leader))
+                        for (int d : b.designs) sim_.reg.get<Mind>(a.leader).know.learnDesign(sim_.designs, d);
                     dissolve(b);
                     a.warTarget = -1;
                 }
@@ -567,7 +657,12 @@ void SocietySystem::speciation(Group& g) {
     }
     for (float& v : avg.g) v /= g.population();
     float d = Genome::distance(avg, sim_.species[sp].baseGenome);
-    if (d < 0.30f) return;
+    if (d < 0.35f) return;
+    // Cô lập địa lý: không có nhóm cùng loài nào trong bán kính 35 ô (dòng gen bị cắt)
+    for (const Group& o : sim_.groups)
+        if (o.alive && o.id != g.id && o.species == sp &&
+            (o.homeX - g.homeX) * (o.homeX - g.homeX) + (o.homeY - g.homeY) * (o.homeY - g.homeY) < 35 * 35)
+            return;
     SpeciesDef nd = sim_.species[sp];
     std::string base = sim_.species[sim_.species.root(sp)].name;
     nd.name = base + " " + g.language.word(sim_.rng, 2);
@@ -576,7 +671,8 @@ void SocietySystem::speciation(Group& g) {
     nd.bornTick = sim_.tick;
     nd.population = 0;
     // Trí tuệ đủ cao → tiến hoá ra "đôi tay khéo léo" (chi trước biết cầm nắm)
-    bool gainedHands = !nd.dexterous && avg[Gene::Intelligence] > 0.5f;
+    // Gen khéo tay trung bình vượt ngưỡng → tiến hoá ra chi trước biết cầm nắm (mở ra chế tạo!)
+    bool gainedHands = !nd.dexterous && avg[Gene::Dexterity] > 0.45f && avg[Gene::Intelligence] > 0.35f;
     if (gainedHands) nd.dexterous = true;
     nd.baseHp *= 0.8f + avg[Gene::Strength] * 0.4f;
     nd.r = static_cast<uint8_t>(std::clamp(nd.r + sim_.rng.irange(-40, 40), 30, 255));
@@ -600,6 +696,8 @@ void SocietySystem::dissolve(Group& g) {
     if (g.stage >= Stage::Tribe) sim_.chronicle.add(sim_.tick, EventKind::Society, g.displayName() + " đã diệt vong", g.homeX, g.homeY);
     g.alive = false;
     g.members.clear();
+    if (g.hearthX >= 0) sim_.world.matter.clearHeatSource(g.hearthX, g.hearthY);
+    if (g.forgeX >= 0) sim_.world.matter.clearHeatSource(g.forgeX, g.forgeY);
     for (auto& other : sim_.groups) {
         other.relations.erase(g.id);
         if (other.warTarget == g.id) other.warTarget = -1;

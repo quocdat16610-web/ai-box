@@ -31,6 +31,11 @@ const ToolEntry kTools[] = {
     {Power::PaintForest, ToolCategory::Terrain}, {Power::PaintSand, ToolCategory::Terrain},
     {Power::PaintMountain, ToolCategory::Terrain}, {Power::PaintSnow, ToolCategory::Terrain},
     {Power::PaintLava, ToolCategory::Terrain},
+    {Power::PourWater, ToolCategory::Matter}, {Power::PourLava, ToolCategory::Matter},
+    {Power::PourAcid, ToolCategory::Matter}, {Power::PourOil, ToolCategory::Matter},
+    {Power::Gunpowder, ToolCategory::Matter}, {Power::HeatUp, ToolCategory::Matter},
+    {Power::CoolDown, ToolCategory::Matter}, {Power::Boulder, ToolCategory::Matter},
+    {Power::OreVein, ToolCategory::Matter},
     {Power::Spawn, ToolCategory::Life},
     {Power::Fire, ToolCategory::Disaster}, {Power::Meteor, ToolCategory::Disaster},
     {Power::Lightning, ToolCategory::Disaster}, {Power::Earthquake, ToolCategory::Disaster},
@@ -38,7 +43,7 @@ const ToolEntry kTools[] = {
     {Power::Rain, ToolCategory::Weather}, {Power::Drought, ToolCategory::Weather},
     {Power::Blessing, ToolCategory::Divine}, {Power::Smite, ToolCategory::Divine},
 };
-const char* kCategoryNames[] = {"Quan sát", "Địa hình", "Sự sống", "Thiên tai", "Thời tiết", "Thần lực"};
+const char* kCategoryNames[] = {"Quan sát", "Địa hình", "Vật chất", "Sự sống", "Thiên tai", "Thời tiết", "Thần lực"};
 
 // ---------------------------------------------------------------------------
 // Tiện ích UI tức thời (immediate mode)
@@ -321,15 +326,36 @@ void drawCreaturePanel(App& app, Rectangle r) {
     // Tri thức
     std::string techs;
     for (int t = 0; t < kTechCount; ++t) if (m.known.test(t)) { if (!techs.empty()) techs += ", "; techs += techDef(t).name; }
-    w.line("Tri thức: " + (techs.empty() ? std::string("(chưa có)") : ""), kMuted);
+    w.line("Tập quán: " + (techs.empty() ? std::string("(chưa có)") : ""), kMuted);
     if (!techs.empty()) w.wrapped(techs, kText, r.y + r.height - w.fs * 6);
+    // Tri thức vật chất MỞ: khái niệm, thiết kế tốt nhất, ý tưởng đang theo đuổi
+    {
+        const Knowhow& K = m.know;
+        std::string cs;
+        for (int k = 0; k < kConceptCount; ++k) if (K.concepts.test(k)) { if (!cs.empty()) cs += ", "; cs += conceptName(static_cast<Concept>(k)); }
+        if (!cs.empty()) w.wrapped("Hiểu: " + cs, Color{170, 220, 255, 255}, r.y + r.height - w.fs * 7);
+        for (int p = 0; p < kPurposeCount && w.y < r.y + r.height - w.fs * 6; ++p) {
+            int d = K.best[p];
+            if (d < 0 || sim.designs[d].primary != static_cast<Purpose>(p)) continue;
+            const Design& ds = sim.designs[d];
+            bool held = inv.item[p] >= 0;
+            w.line(fmt("%s %s: %s %.1f", held ? "■" : "□", purposeName(static_cast<Purpose>(p)), ds.name.c_str(), ds.value(static_cast<Purpose>(p))),
+                   held ? kText : kMuted);
+        }
+        if (m.hasIdea) {
+            std::string idea;
+            for (const Part& pt : m.idea) { if (!idea.empty()) idea += " + "; idea += sim.world.materials[pt.mat].name + " " + shapeName(pt.shape); }
+            w.wrapped(std::string("Ý tưởng (") + purposeName(m.ideaPurpose) + "): " + idea, Color{255, 200, 255, 255}, r.y + r.height - w.fs * 5);
+        }
+        w.line(fmt("Biết %zu vật liệu · %zu thiết kế · %zu quy trình · %d phát minh", K.materials.size(), K.designs.size(), K.processes.size(), K.inventions), kMuted);
+    }
     // Kỹ năng nổi bật + trí nhớ
     std::string skills;
     for (int s = 0; s < kSkillCount; ++s)
         if (m.skill[s] > 0.05f) skills += fmt("%s %.0f%%  ", skillName(static_cast<Skill>(s)), m.skill[s] * 100);
     if (!skills.empty()) w.line(skills, kMuted);
-    w.line(fmt("Trí nhớ: %d/%d sự kiện · Đồ: %d ăn, %d gỗ, %d đá · Công cụ %d, vũ khí %d", static_cast<int>(m.ltm.facts().size()), m.ltm.capacity,
-               inv.food, inv.wood, inv.stone, inv.toolTier, inv.weaponTier), kMuted);
+    w.line(fmt("Trí nhớ: %d/%d sự kiện · Đồ: %d ăn, %d gỗ, %d đá, %d khác", static_cast<int>(m.ltm.facts().size()), m.ltm.capacity,
+               inv.food, inv.wood, inv.stone, inv.matTotal()), kMuted);
     if (m.lastDiscovery >= 0 && sim.tick - m.lastDiscoveryTick < kTicksPerYear * 3)
         w.line(std::string("Vừa học được: ") + techDef(m.lastDiscovery).name, Color{255, 220, 90, 255});
     // Nút theo dõi
@@ -356,7 +382,15 @@ void drawGroupPanel(App& app, Rectangle r) {
     w.line(std::string(stageName(g->stage, g->animal)) + " · " + sim.species[g->species].name + " · " + governmentName(g->gov), kMuted);
     w.line(fmt("Dân số %d (đỉnh %d) · Trí tuệ TB %.2f · Thế hệ %d", g->population(), g->peakPopulation, g->avgIntellect, g->generationDepth));
     w.line(fmt("Lãnh thổ %d ô · %d công trình · %d chỗ ở", g->territoryTiles, g->buildingsTotal, g->housing));
-    w.line(fmt("Kho: %d lương thực, %d gỗ, %d đá, %d quặng", g->food, g->wood, g->stone, g->ore));
+    w.line(fmt("Kho: %d lương thực, %d gỗ, %d đá, %d kim loại", g->food, g->wood, g->stone, g->metalStock(sim.world.materials)));
+    w.line(fmt("%s · Trình độ công nghệ %.1f", g->era.c_str(), g->techLevel), Color{255, 210, 120, 255});
+    for (int p = 0; p < kPurposeCount && w.y < r.y + r.height * 0.55f; ++p) {
+        int d = g->bestDesign[p];
+        if (d < 0 || sim.designs[d].primary != static_cast<Purpose>(p)) continue;
+        const Design& ds = sim.designs[d];
+        w.line(fmt("  %s: %s %.1f", purposeName(static_cast<Purpose>(p)), ds.name.c_str(), ds.value(static_cast<Purpose>(p))), kText);
+    }
+    if (g->forgeX >= 0) w.line(fmt("  Lò luyện: %.0f°C · %zu quy trình hoá học", g->forgeHeat, g->processes.size()), kMuted);
     if (sim.reg.valid(g->leader)) w.line("Thủ lĩnh: " + sim.reg.get<Social>(g->leader).name, GOLD);
     w.line("Ngôn ngữ: " + g->language.familyName + (g->deity.empty() ? "" : " · Tín ngưỡng: " + g->deity), kMuted);
     w.gap();
@@ -373,7 +407,7 @@ void drawGroupPanel(App& app, Rectangle r) {
     w.wrapped(laws.empty() ? "(chưa có)" : laws);
     std::string techs;
     for (int t = 0; t < kTechCount; ++t) if (g->knowledge.test(t)) { if (!techs.empty()) techs += ", "; techs += techDef(t).name; }
-    w.line("Tri thức tập thể:", kAccent);
+    w.line("Tập quán văn hoá:", kAccent);
     w.wrapped(techs.empty() ? "(chưa có)" : techs, kText, r.y + r.height - w.fs * 8);
     w.line("Ngoại giao:", kAccent);
     int shown = 0;
@@ -442,6 +476,45 @@ void drawSpeciesPanel(App& app, Rectangle r) {
     }
 }
 
+// Bảng "Hoá học & vật lý": phản ứng đang diễn ra, thống kê, khí quyển, vật liệu mới, phát minh
+void drawChemistryPanel(App& app, Rectangle r) {
+    Simulation& sim = *app.sim;
+    const MatterGrid& G = sim.world.matter;
+    const MaterialRegistry& R = sim.world.materials;
+    Writer w{r.x + 10 * app.uiScale, r.y + 8 * app.uiScale, r.width - 20 * app.uiScale, 12 * app.uiScale};
+    w.title("Vật lý & Hoá học");
+    w.line(fmt("Khí quyển: CO₂ %.0f ppm · độ ẩm %.0f%% · gió (%.2f, %.2f)", G.atmosCO2, G.humidity * 100, G.wind.x, G.wind.y));
+    w.line(fmt("Ô hoạt động %d · đang cháy %d · vật thể bay/lăn %zu", G.activeCount(), G.burningCount(), sim.physics.bodies.size()), kMuted);
+    // Vật liệu sinh ra trong lúc chạy (hợp kim mới)
+    std::string born;
+    for (int i = mat::DefaultCount; i < R.count(); ++i) if (!R[static_cast<MatId>(i)].natural) { if (!born.empty()) born += ", "; born += R[static_cast<MatId>(i)].name; }
+    w.wrapped(fmt("Vật liệu: %d", R.count()) + (born.empty() ? std::string("") : " — mới: " + born), kText, r.y + r.height * 0.3f);
+    w.line(fmt("Phát minh: %zu thiết kế, %zu quy trình trên thế giới", sim.designs.all.size(), sim.processes.all.size()), Color{255, 210, 120, 255});
+    for (int p = 0; p < kPurposeCount && w.y < r.y + r.height * 0.5f; ++p) {
+        int d = sim.designs.worldBest[p];
+        if (d < 0) continue;
+        const Design& ds = sim.designs[d];
+        w.line(fmt("  Kỷ lục %s: %s %.1f", purposeName(static_cast<Purpose>(p)), ds.name.c_str(), ds.value(static_cast<Purpose>(p))), kMuted);
+    }
+    w.gap();
+    w.line("Phản ứng gần đây:", kAccent);
+    const auto& rec = G.recent();
+    for (auto it = rec.rbegin(); it != rec.rend() && w.y < r.y + r.height - w.fs * 2; ++it) {
+        std::string t = fmt("[%ld] ", it->tick / kTicksPerYear) + reactionName(it->kind) + ": " + it->describe(R);
+        while (t.size() > 4 && ui::measureText(t, w.fs * 0.9f) > w.w) {
+            t.pop_back();
+            while (!t.empty() && (static_cast<unsigned char>(t.back()) & 0xC0) == 0x80) t.pop_back();
+        }
+        Rectangle lr{r.x + 4, w.y - 1, r.width - 8, w.fs * 1.2f};
+        if (pointInRect(GetMousePosition(), lr) && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && pointInRect(app.pressPos, lr)) {
+            app.cam.target = {(it->x + 0.5f) * kTileWorld, (it->y + 0.5f) * kTileWorld};
+            app.cam.zoom = std::max(app.cam.zoom, 4.0f);
+        }
+        ui::drawText(t, w.x, w.y, w.fs * 0.9f, Color{255, 220, 150, 255});
+        w.y += w.fs * 1.2f;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Thanh trên + thanh công cụ
 // ---------------------------------------------------------------------------
@@ -470,7 +543,8 @@ void drawHud(App& app) {
         if (button({bx, 4 * s, 86 * s, th - 8 * s}, "Biên niên", app.panel == SidePanel::Chronicle))
             app.panel = app.panel == SidePanel::Chronicle ? SidePanel::None : SidePanel::Chronicle;
         if (button({bx + 90 * s, 4 * s, 86 * s, th - 8 * s}, "Suy nghĩ", app.opt.debugThoughts)) app.opt.debugThoughts = !app.opt.debugThoughts;
-        if (button({bx + 180 * s, 4 * s, 86 * s, th - 8 * s}, "Lãnh thổ", app.opt.showLabels)) app.opt.showLabels = !app.opt.showLabels;
+        if (button({bx + 180 * s, 4 * s, 86 * s, th - 8 * s}, std::string("Lớp: ") + layerName(app.opt.layer), app.opt.layer != Layer::Normal))
+            app.opt.layer = static_cast<Layer>((static_cast<int>(app.opt.layer) + 1) % static_cast<int>(Layer::Count));
         if (button({bx + 270 * s, 4 * s, 80 * s, th - 8 * s}, "Menu")) app.inMenu = true;
     }
 
@@ -510,8 +584,17 @@ void drawHud(App& app) {
             tx += toolW + 4 * s;
             if (button({tx, rowY2, toolW, bh}, "Menu")) app.inMenu = true;
             tx += toolW + 4 * s;
+            if (button({tx, rowY2, toolW, bh}, "Hoá học", app.panel == SidePanel::Chemistry))
+                app.panel = app.panel == SidePanel::Chemistry ? SidePanel::None : SidePanel::Chemistry;
+            tx += toolW + 4 * s;
+            if (button({tx, rowY2, toolW, bh}, std::string("Lớp: ") + layerName(app.opt.layer), app.opt.layer != Layer::Normal))
+                app.opt.layer = static_cast<Layer>((static_cast<int>(app.opt.layer) + 1) % static_cast<int>(Layer::Count));
+            tx += toolW + 4 * s;
         } else {
-            ui::drawText("Chạm sinh vật để xem suy nghĩ · chạm lãnh thổ để xem nền văn minh · kéo để di chuyển, chụm 2 ngón để phóng to",
+            if (button({tx, rowY2, toolW, bh}, "Hoá học", app.panel == SidePanel::Chemistry))
+                app.panel = app.panel == SidePanel::Chemistry ? SidePanel::None : SidePanel::Chemistry;
+            tx += toolW + 4 * s;
+            ui::drawText("Chạm sinh vật: xem suy nghĩ · chạm lãnh thổ: nền văn minh · kéo: di chuyển · chụm 2 ngón: phóng to",
                          tx + 6 * s, rowY2 + (bh - 13 * s) / 2, 13 * s, kMuted);
         }
     } else {
@@ -537,6 +620,7 @@ void drawHud(App& app) {
         case SidePanel::Group: drawGroupPanel(app, r); break;
         case SidePanel::Chronicle: drawChroniclePanel(app, r); break;
         case SidePanel::Species: drawSpeciesPanel(app, r); break;
+        case SidePanel::Chemistry: drawChemistryPanel(app, r); break;
         default: break;
         }
     }
@@ -560,8 +644,9 @@ void drawMenu(App& app) {
     ui::drawText(sub, (W - ui::measureText(sub, sfs)) / 2, H * 0.1f + tfs * 1.2f, sfs, kMuted);
 
     float bw = std::min(420 * s, W - 40.0f), bh = 54 * s;
-    float x = (W - bw) / 2, y = H * 0.32f;
-    const char* desc[] = {"4 chủng tộc, động vật, quái vật", "Bầy sói học săn theo bầy → bộ tộc sói", "Người nguyên thuỷ → công cụ → làng → quốc gia"};
+    float x = (W - bw) / 2, y = H * 0.28f;
+    const char* desc[] = {"4 chủng tộc, động vật, quái vật", "Bầy sói học săn theo bầy → bộ tộc sói", "Người nguyên thuỷ → công cụ → làng → quốc gia",
+                          "Hai nhóm nhân bản, hai môi trường → hai con đường"};
     for (int i = 0; i < static_cast<int>(Scenario::Count); ++i) {
         if (button({x, y, bw, bh}, std::string(scenarioName(static_cast<Scenario>(i))) + " — " + desc[i], app.scenario == static_cast<Scenario>(i)))
             app.scenario = static_cast<Scenario>(i);

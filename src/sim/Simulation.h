@@ -22,6 +22,8 @@
 #include "Species.h"
 #include "Components.h"
 #include "Chronicle.h"
+#include "../ai/Invention.h"
+#include "../phys/Physics.h"
 #include <memory>
 #include <deque>
 
@@ -41,6 +43,7 @@ struct SimStats {
     int births = 0, deaths = 0;
     float avgIntellect = 0;
     int thinksLastTick = 0;
+    int inventAttempts = 0, inventTried = 0, inventSuccess = 0, crafts = 0, experiments = 0, productions = 0;
     int sapientDeaths[5] = {0, 0, 0, 0, 0}; // tử vong của loài có tay khéo theo nguyên nhân (già/đói/bị giết/thiên tai/lạnh)
 };
 
@@ -75,6 +78,7 @@ public:
     std::string dateString() const;
     float yearsOf(long ticks) const { return ticks / static_cast<float>(kTicksPerYear); }
     const SimStats& stats() const { return stats_; }
+    SimStats& statsMut() { return stats_; }
 
     // ---- Dữ liệu công khai (các hệ thống & renderer cùng đọc) ----
     SimConfig cfg;
@@ -88,6 +92,9 @@ public:
     long tick = 0;
     std::vector<Entity> agents; // danh sách entity có Mind (để duyệt song song)
     TechSet worldFirsts;
+    DesignRegistry designs;       // mọi thiết kế từng được phát minh (phả hệ phát minh toàn cầu)
+    ProcessRegistry processes;    // mọi quy trình hoá học từng được hiểu ra
+    PhysicsWorld physics;         // vật thể bay/lăn (mũi tên, đá, mảnh vỡ)
     std::vector<std::pair<int, int>> killEvents; // (nhóm kẻ giết, nhóm nạn nhân) — SocietySystem xử lý ngoại giao        // tech đã được phát minh lần đầu ở đâu đó trên thế giới
 
 private:

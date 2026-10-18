@@ -6,6 +6,8 @@
 #include "../civ/SocietySystem.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 namespace wb {
 
@@ -31,6 +33,9 @@ void Simulation::reset(const SimConfig& c) {
     killEvents.clear();
     chronicle.clear();
     worldFirsts.reset();
+    designs.clear();
+    processes.clear();
+    physics.clear();
     tick = 0;
     stats_ = SimStats{};
     rng.reseed(cfg.seed);
@@ -82,9 +87,10 @@ Entity Simulation::spawnCreature(int sp, Vec2 pos, const Genome* genome, Entity 
     b.species = sp;
     b.female = rng.chance(0.5f);
     float sz = sd.size;
-    b.maxHp = sd.baseHp * (0.6f + g[Gene::Strength] * 0.8f);
+    float bodySize = 0.7f + g[Gene::Size] * 0.6f;   // gen kích thước (tiến hoá được)
+    b.maxHp = sd.baseHp * (0.6f + g[Gene::Strength] * 0.8f) * bodySize;
     b.hp = b.maxHp;
-    b.damage = sd.baseDamage * (0.6f + g[Gene::Strength] * 0.8f);
+    b.damage = sd.baseDamage * (0.6f + g[Gene::Strength] * 0.8f) * bodySize;
     b.speed = sd.baseSpeed * (0.6f + g[Gene::Speed] * 0.8f);
     (void)sz;
     if (mother == NullEntity) b.ageTicks = static_cast<long>(sd.adultYears * kTicksPerYear * rng.range(1.0f, 2.0f)); // sinh vật được "thả" là con trưởng thành
@@ -114,6 +120,14 @@ void Simulation::kill(Entity e, int cause) {
     if (!b || b->dead) return;
     b->dead = true;
     b->deathCause = cause;
+    if (std::getenv("WB_DEBUG_DEATH") && cause == 3 && species[b->species].dexterous) {
+        const Transform& t = reg.get<Transform>(e);
+        int x = static_cast<int>(t.pos.x), y = static_cast<int>(t.pos.y);
+        const MatterCell& c = world.matter.cell(x, y);
+        std::fprintf(stderr, "DEATH tick %ld at %d,%d T=%.0f gas=%s/%d fire=%d terrain=%s bld=%d expl=%zu\n", tick, x, y, world.matter.temp(x, y),
+                     world.materials[c.gas.mat].name.c_str(), c.gas.amount, world.at(x, y).fire, terrainInfo(world.at(x, y).terrain).name,
+                     static_cast<int>(world.at(x, y).building), world.matter.explosions().size());
+    }
     dying_.push_back(e);
 }
 
@@ -196,23 +210,47 @@ void Simulation::metabolism() {
         float maxAge = sd.maxAgeYears * (0.7f + g[Gene::Longevity] * 0.6f) * kTicksPerYear;
         if (b.ageTicks > maxAge && rng.chance(0.002f)) { kill(e, 0); continue; }
         // Đói & mệt
-        b.hunger += (b.sleeping ? 0.0005f : 0.0010f) * (0.8f + sd.size * 0.2f) * popPressure;
+        b.hunger += (b.sleeping ? 0.0005f : 0.0010f) * (0.8f + sd.size * 0.2f) * (0.7f + g[Gene::Size] * 0.6f) * popPressure;
         if (!b.sleeping) b.fatigue += 0.0007f;
         b.fatigue = std::min(b.fatigue, 1.0f);
         if (b.hunger >= 1.0f) { b.hunger = 1.0f; b.hp -= 0.4f; if (b.hp <= 0) { kill(e, 1); continue; } }
         else if (b.hunger < 0.6f && b.hp < b.maxHp) b.hp = std::min(b.maxHp, b.hp + 0.03f);
-        // Khí hậu: ngoài vùng chịu đựng → lạnh/nóng; có nhà / biết dùng lửa → được che chở
+        // Nhiệt độ THẬT (°C) từ lớp vật chất: lạnh, nóng, bỏng lửa, khí độc
         if ((b.ageTicks + entityIndex(e)) % 10 == 0) {
             int x = static_cast<int>(tr.pos.x), y = static_cast<int>(tr.pos.y);
             float t = world.temperatureAt(x, y);
-            float coldLimit = -0.2f - g[Gene::ColdResist] * 0.9f;
-            float heatLimit = 0.7f + g[Gene::HeatResist] * 0.6f;
-            float stress = std::max(0.0f, coldLimit - t) + std::max(0.0f, t - heatLimit);
-            if (m.known.test(ti(Tech::FireUse))) stress *= 0.5f;
+            float coldLimit = 8.0f - g[Gene::ColdResist] * 35.0f;   // lông dày / mỡ → chịu lạnh tốt
+            float heatLimit = 34.0f + g[Gene::HeatResist] * 20.0f;
+            float stress = std::max(0.0f, coldLimit - t) / 15.0f + std::max(0.0f, t - heatLimit) / 15.0f;
+            // Quần áo (thiết kế "giữ ấm") cách nhiệt cơ thể
+            if (t < coldLimit) stress /= 1.0f + heldValue(*this, e, Purpose::Warmth) * 0.15f;
             const Tile& here = world.at(x, y);
             if (here.building != Building::None && buildingInfo(here.building).housing > 0) stress = 0;
+            if (Group* hg = group(so.group); hg && hg->hasHearth && t < coldLimit &&
+                std::abs(hg->hearthX - x) + std::abs(hg->hearthY - y) <= 4) stress *= 0.2f;   // sưởi bên bếp lửa
             b.cold = clamp01(b.cold + stress * 0.05f - 0.02f);
             if (b.cold > 0.95f) { b.hp -= 1.5f; if (b.hp <= 0) { kill(e, 4); continue; } }
+            // Bỏng: đứng trong lửa / dung nham / hơi nóng
+            if (t > 70) {
+                b.hp -= (t - 70) * 0.012f;
+                b.sleeping = false;
+                m.needReplan = true;
+                m.nextThink = tick;          // phản xạ tức thời: bỏng → nghĩ ngay để bỏ chạy
+                if (b.hp <= 0) { kill(e, 3); continue; }
+            }
+            // Khí độc (SO₂, axit bay hơi...) — liều lượng × độc tính
+            const MatterSlot& gs = world.matter.cell(x, y).gas;
+            if (!gs.empty()) {
+                float tox = world.materials[gs.mat].toxicity * gs.amount * 0.02f;
+                if (tox > 0) { b.hp -= tox; if (b.hp <= 0) { kill(e, 3); continue; } }
+            }
+        }
+        // Ngoại lực (nổ, bị đạn bắn trúng) đẩy cơ thể đi, ma sát làm tắt dần
+        if (tr.push.len2() > 1e-4f) {
+            Vec2 np = tr.pos + tr.push;
+            if (world.walkable(static_cast<int>(np.x), static_cast<int>(np.y))) tr.pos = np;
+            else tr.push = Vec2{};
+            tr.push = tr.push * 0.8f;
         }
         if (b.reproCooldown > 0) b.reproCooldown--;
         if (b.lastAttacker != NullEntity && rng.chance(0.01f)) b.lastAttacker = NullEntity;
@@ -257,8 +295,10 @@ void Simulation::cleanupDead() {
         int x = static_cast<int>(tr.pos.x), y = static_cast<int>(tr.pos.y);
         // Để lại xác (thức ăn cho kẻ ăn xác) và công cụ (tri thức cho kẻ tò mò)
         world.dropItem(x, y, ItemKind::Corpse, static_cast<int>(species[b.species].size * 5) + 1);
-        if (inv.toolTier > 0) world.dropItem(x, y, ItemKind::OldTool, 1, inv.toolTier >= 2 ? ti(Tech::Metallurgy) : ti(Tech::StoneTools));
-        if (inv.weaponTier > 0) world.dropItem(x, y, ItemKind::OldWeapon, 1, ti(Tech::Weapons));
+        // Công cụ của người chết rơi lại — kẻ khác nhặt được có thể "học ngược" thiết kế
+        for (int s = 0; s < kPurposeCount; ++s)
+            if (inv.item[s] >= 0) world.dropItem(x, y, ItemKind::OldTool, 1, inv.item[s]);
+        world.matter.addMatter(x, y, mat::Blood, 2, 37);
         if (Group* g = groupOf(e)) { g->food += inv.food / 2; }
         leaveGroup(e);
         stats_.deaths++;
@@ -289,6 +329,12 @@ void Simulation::step() {
     // ---- ACT (tuần tự) ----
     size_t n = agents.size();
     for (size_t i = 0; i < n; ++i) Brain::act(*this, agents[i]);
+
+    // ---- Vật lý: vật thể bay/lăn, rồi xử lý các vụ nổ do hoá học sinh ra ----
+    physics.step(*this);
+    for (const Explosion& ex : world.matter.explosions())
+        physics.blast(*this, {ex.x + 0.5f, ex.y + 0.5f}, ex.energy);
+    world.matter.explosions().clear();
 
     metabolism();
     society_->update();

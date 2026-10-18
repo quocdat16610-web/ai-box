@@ -37,9 +37,9 @@ const ActionDef kActions[kActionCount] = {
     {"Khám phá",                  0,                      Explored,       2.0f, NT,                   false, false, DietReq::Any,    -1},
     {"Đốn gỗ",                    KnowsTree,              HasWood,        3.0f, NT,                   true,  false, DietReq::Any,    SK_FOR},
     {"Nhặt đá",                   KnowsStone,             HasStone,       3.0f, NT,                   true,  false, DietReq::Any,    SK_FOR},
-    {"Đào quặng",                 KnowsOre | HasTool,     HasOre,         4.0f, ti(Tech::Mining),     true,  false, DietReq::Any,    SK_CRA},
-    {"Chế tạo công cụ",           HasWood | HasStone,     HasTool,        2.0f, ti(Tech::StoneTools), true,  false, DietReq::Any,    SK_CRA},
-    {"Chế tạo vũ khí",            HasWood | HasStone,     HasWeapon,      2.0f, ti(Tech::Weapons),    true,  false, DietReq::Any,    SK_CRA},
+    {"Đào quặng",                 KnowsOre,               HasOre,         4.0f, NT,                   true,  false, DietReq::Any,    SK_CRA},
+    {"Chế tạo theo thiết kế",     0,                      HasTool,        2.0f, NT,                   true,  false, DietReq::Any,    SK_CRA},
+    {"Sáng tạo thiết kế mới",     0,                      Invented,       3.0f, NT,                   true,  false, DietReq::Any,    SK_CRA},
     {"Gom vật liệu xây dựng",     0,                      HasMaterials,   4.0f, NT,                   false, true,  DietReq::Any,    SK_BUI},
     {"Xây công trình",            HasMaterials,           Built,          3.0f, NT,                   false, true,  DietReq::Any,    SK_BUI},
     {"Nộp gỗ vào kho",            HasWood,                Stored,         1.0f, NT,                   true,  true,  DietReq::Any,    -1},
@@ -49,17 +49,21 @@ const ActionDef kActions[kActionCount] = {
     {"Đánh dấu lãnh thổ",         0,                      Marked,         2.0f, ti(Tech::ScentMarking), false, true, DietReq::Any,   -1},
     {"Thờ cúng",                  0,                      Worshipped,     2.0f, ti(Tech::Religion),   false, true,  DietReq::Any,    -1},
     {"Thách thức thủ lĩnh",       0,                      Dominant,       4.0f, ti(Tech::Hierarchy),  false, true,  DietReq::Any,    SK_LEA},
+    {"Thí nghiệm vật liệu ở lò",  0,                      Experimented,   3.0f, NT,                   true,  true,  DietReq::Any,    SK_CRA},
+    {"Chế biến theo quy trình",   0,                      Produced,       3.0f, NT,                   true,  true,  DietReq::Any,    SK_CRA},
+    {"Nộp quặng/vật liệu vào kho", HasOre,                Stored,         1.0f, NT,                   true,  true,  DietReq::Any,    -1},
 };
 
 const char* kGoalNames[kGoalCount] = {
     "Thư thả", "Ăn", "Nghỉ ngơi", "Chạy trốn", "Tự vệ", "Sinh sản", "Giao tiếp", "Khám phá",
-    "Lao động cho nhóm", "Chế tạo công cụ", "Chế tạo vũ khí", "Xây dựng", "Trồng trọt",
-    "Giữ lãnh thổ", "Thờ cúng", "Chiến tranh", "Giành quyền lực",
+    "Lao động cho nhóm", "Chế tạo", "Sáng tạo", "Xây dựng", "Trồng trọt",
+    "Giữ lãnh thổ", "Thờ cúng", "Chiến tranh", "Giành quyền lực", "Thí nghiệm", "Sản xuất",
 };
 
 const WorldState kGoalStates[kGoalCount] = {
     Explored, Fed, Rested, Safe, EnemyDefeated, Reproduced, Socialized, Explored,
-    Stored, HasTool, HasWeapon, Built, Farmed, Marked, Worshipped, EnemyDefeated, Dominant,
+    Stored, HasTool, Invented, Built, Farmed, Marked, Worshipped, EnemyDefeated, Dominant,
+    Experimented, Produced,
 };
 
 const char* kSkillNames[kSkillCount] = {"Hái lượm", "Săn bắn", "Chế tạo", "Xây dựng", "Chiến đấu", "Xã giao", "Trồng trọt", "Lãnh đạo"};
@@ -77,7 +81,7 @@ bool planActions(WorldState start, WorldState goal, const PlannerAgentView& view
     // Bộ đệm cục bộ theo luồng: tránh cấp phát lại mỗi lần lập kế hoạch.
     thread_local std::vector<Node> nodes;
     nodes.clear();
-    auto h = [&](WorldState s) { return static_cast<float>(std::bitset<32>(goal & ~s).count()); };
+    auto h = [&](WorldState s) { return static_cast<float>(std::bitset<64>(goal & ~s).count()); };
     nodes.push_back({start, 0, h(start), -1, ActionId::Count, 0, false});
     const int kMaxNodes = 300;
     while (true) {

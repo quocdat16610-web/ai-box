@@ -24,6 +24,9 @@ enum class Gene : uint8_t {
     Longevity,    // tuổi thọ
     ColdResist,   // chịu lạnh
     HeatResist,   // chịu nóng
+    Dexterity,    // độ khéo của chi trước → cầm nắm, chế tạo (tiến hoá được!)
+    Size,         // kích thước cơ thể → sức khoẻ, sức mạnh, lượng ăn
+    Swimming,     // khả năng bơi → vượt nước nông
     Count
 };
 constexpr int kGeneCount = static_cast<int>(Gene::Count);

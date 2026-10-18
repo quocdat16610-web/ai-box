@@ -20,7 +20,13 @@ option(WB_BUILD_HEADLESS "Build trình chạy headless" ON)
 # ---------------- Lõi mô phỏng ----------------
 add_library(wb_core STATIC
     src/world/World.cpp
+    src/phys/Material.cpp
+    src/phys/MatterGrid.cpp
+    src/phys/Chemistry.cpp
+    src/phys/Physics.cpp
     src/ai/Knowledge.cpp
+    src/ai/Invention.cpp
+    src/ai/Creativity.cpp
     src/ai/Goap.cpp
     src/ai/Brain.cpp
     src/civ/SocietySystem.cpp
@@ -43,7 +49,10 @@ if (WB_BUILD_HEADLESS AND NOT ANDROID)
     # Kịch bản mẫu phải đạt được giai đoạn văn minh tối thiểu trong thời gian giới hạn
     add_test(NAME wolves_form_tribe COMMAND worldbox_sim --scenario wolves --years 25 --seed 3 --quiet --expect-stage Tribe)
     add_test(NAME humans_build_village COMMAND worldbox_sim --scenario humans --years 40 --seed 5 --quiet --expect-stage Village)
+    add_test(NAME chemistry_reactions COMMAND worldbox_sim --chemtest)
     add_test(NAME sandbox_runs COMMAND worldbox_sim --scenario sandbox --years 10 --seed 1 --quiet)
+    # Công nghệ mở: phải có phát minh thật; vật lý/hoá học: phải xảy ra nhiều loại phản ứng khác nhau
+    add_test(NAME humans_invent_and_react COMMAND worldbox_sim --scenario humans --years 20 --seed 8 --quiet --expect-designs 10 --expect-reactions 5)
 endif()
 
 # ---------------- Game (raylib) ----------------

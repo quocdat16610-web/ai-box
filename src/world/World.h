@@ -9,13 +9,16 @@
 #pragma once
 #include "Terrain.h"
 #include "../core/Math.h"
+#include "../phys/Material.h"
+#include "../phys/MatterGrid.h"
 #include <vector>
 #include <functional>
 #include <string>
 
 namespace wb {
 
-constexpr int kTicksPerYear = 600; // 1 năm trong game = 600 tick (≈30 giây ở tốc độ 1x)
+constexpr int kTicksPerYear = 600;
+constexpr uint8_t kTileVolcanic = 1; // hồ dung nham núi lửa (nguồn nhiệt vĩnh viễn) // 1 năm trong game = 600 tick (≈30 giây ở tốc độ 1x)
 
 struct Tile {
     Terrain terrain = Terrain::Grass;
@@ -23,9 +26,12 @@ struct Tile {
     uint8_t buildingHp = 0;
     uint8_t wood = 0;     // lượng gỗ (cây) 0..255
     uint8_t stone = 0;    // đá lộ thiên
-    uint8_t ore = 0;      // quặng kim loại
+    uint8_t ore = 0;      // trữ lượng quặng
+    MatId oreMat = kNoMat;     // loại quặng (đồng, thiếc, sắt, vàng, lưu huỳnh, khoáng lạ…)
+    MatId stoneMat = mat::Stone; // loại đá lộ thiên (đá, đá lửa, đá vôi, đất sét, đá vỏ chai…)
     uint8_t food = 0;     // quả mọng / cây ăn được
-    uint8_t fire = 0;     // >0: đang cháy (đếm ngược)
+    uint8_t fire = 0;     // >0: đang cháy (cường độ, do MatterGrid cập nhật)
+    uint8_t flags = 0;    // kTileVolcanic...
     uint8_t itemFlag = 0; // có vật phẩm trên ô (giúp quan sát nhanh, không phải duyệt danh sách)
     int16_t owner = -1;   // id nhóm (bộ tộc / quốc gia) sở hữu lãnh thổ, -1 = vô chủ
     float height = 0.5f;  // độ cao 0..1
@@ -48,6 +54,9 @@ struct Weather {
     float seasonTemp = 0; // -1 (đông) .. +1 (hè)
 };
 
+// Vật liệu nền của một loại địa hình (đất, đá, nước, cát…).
+MatId groundMaterial(Terrain t);
+
 class World {
 public:
     void generate(int width, int height, uint32_t seed);
@@ -62,7 +71,8 @@ public:
     bool walkable(int x, int y) const;
     bool isWater(int x, int y) const;
     float moveCost(int x, int y) const;
-    float temperatureAt(int x, int y) const;
+    float temperatureAt(int x, int y) const; // °C thực tế (từ lớp vật chất)
+    bool raining(int x, int y) const;
 
     // Tìm ô gần nhất thoả điều kiện trong bán kính r (quét theo vòng tròn đồng tâm).
     // Trả về true nếu tìm thấy, ghi toạ độ vào (ox, oy).
@@ -92,7 +102,11 @@ public:
     bool fullRedraw = true;
 
     // Thống kê ô đang cháy để AI quan sát "lửa".
-    int burningCount() const { return burning_; }
+    int burningCount() const { return matter.burningCount(); }
+
+    // ---- Vật lý & hoá học ----
+    MaterialRegistry materials;   // bảng vật liệu (tăng dần khi có hợp kim mới)
+    MatterGrid matter;            // nhiệt độ, chất lỏng, khí, phản ứng
 
 private:
     void classify(int x, int y, float h, float moist, float temp);
@@ -101,9 +115,7 @@ private:
     std::vector<GroundItem> items_;
     std::vector<uint8_t> dirtyFlag_;
     std::vector<int> dirty_;
-    std::vector<int> fires_;
     Weather weather_;
-    int burning_ = 0;
 };
 
 } // namespace wb

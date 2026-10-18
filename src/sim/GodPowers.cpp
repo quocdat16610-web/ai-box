@@ -8,7 +8,8 @@ namespace wb {
 const char* powerName(Power p) {
     static const char* n[] = {"Quan sát", "Nâng đất", "Hạ đất", "Nước", "Cỏ", "Rừng", "Cát", "Núi", "Tuyết", "Dung nham",
                               "Lửa", "Thiên thạch", "Sét", "Mưa", "Hạn hán", "Động đất", "Dịch bệnh", "Ban phước",
-                              "Trừng phạt", "Thả sinh vật"};
+                              "Trừng phạt", "Thả sinh vật", "Đổ nước", "Đổ dung nham", "Đổ axit", "Đổ dầu",
+                              "Thuốc súng", "Đốt nóng", "Làm lạnh", "Ném đá tảng", "Mạch quặng"};
     return n[static_cast<int>(p)];
 }
 
@@ -16,7 +17,8 @@ bool powerIsBrush(Power p) {
     switch (p) {
     case Power::RaiseLand: case Power::LowerLand: case Power::PaintWater: case Power::PaintGrass:
     case Power::PaintForest: case Power::PaintSand: case Power::PaintMountain: case Power::PaintSnow:
-    case Power::PaintLava: case Power::Fire:
+    case Power::PaintLava: case Power::Fire: case Power::PourWater: case Power::PourLava: case Power::PourAcid:
+    case Power::PourOil: case Power::Gunpowder: case Power::HeatUp: case Power::CoolDown:
         return true;
     default:
         return false;
@@ -73,7 +75,14 @@ void applyPower(Simulation& sim, Power p, int x, int y, int r, int speciesId) {
         });
         break;
     case Power::PaintSnow: forDisc(sim, x, y, r, [&](int tx, int ty) { w.setTerrain(tx, ty, Terrain::Snow); }); break;
-    case Power::PaintLava: forDisc(sim, x, y, r, [&](int tx, int ty) { w.setTerrain(tx, ty, Terrain::Lava); w.ignite(tx + 1, ty); }); break;
+    case Power::PaintLava:
+        // Hồ dung nham "vĩnh cửu" như núi lửa (nguồn nhiệt 1150°C — đốt cháy rừng xung quanh)
+        forDisc(sim, x, y, r, [&](int tx, int ty) {
+            w.setTerrain(tx, ty, Terrain::Lava);
+            w.at(tx, ty).flags |= kTileVolcanic;
+            w.matter.setTemp(tx, ty, 1150);
+        });
+        break;
     case Power::Fire: forDisc(sim, x, y, r, [&](int tx, int ty) { if (sim.rng.chance(0.5f)) w.ignite(tx, ty); }); break;
     case Power::Meteor: {
         int R = r + 3;
@@ -86,11 +95,23 @@ void applyPower(Simulation& sim, Power p, int x, int y, int r, int speciesId) {
             if (sim.rng.chance(0.2f)) w.ignite(tx, ty);
         });
         sim.grid.query({x + 0.5f, y + 0.5f}, static_cast<float>(R), [&](Entity e, Vec2) { sim.kill(e, 3); });
+        // Va chạm siêu tốc: nhiệt độ cực cao (đá nóng chảy), sóng xung kích, mảnh vỡ nóng văng ra
+        forDisc(sim, x, y, R / 2 + 1, [&](int tx, int ty) { w.matter.setTemp(tx, ty, 2200); });
+        sim.physics.blast(sim, {x + 0.5f, y + 0.5f}, 4000.0f * (1 + r));
+        for (int i = 0; i < 12; ++i) {
+            PhysBody deb;
+            deb.kind = BodyKind::Debris; deb.mat = sim.rng.chance(0.4f) ? mat::IronOre : mat::Basalt;
+            deb.mass = 5; deb.radius = 0.3f; deb.temp = 1300; deb.pos = {x + 0.5f, y + 0.5f};
+            float a = sim.rng.range(0, 6.2831853f), v = sim.rng.range(8, 22);
+            deb.vel = {std::cos(a) * v, std::sin(a) * v}; deb.vz = sim.rng.range(6, 18); deb.life = 300;
+            sim.physics.spawn(deb);
+        }
         witness(sim, x, y, R);
-        sim.chronicle.add(sim.tick, EventKind::Disaster, "Một thiên thạch rơi xuống thế giới!", x, y);
+        sim.chronicle.add(sim.tick, EventKind::Disaster, "Một thiên thạch (mang quặng sắt) rơi xuống thế giới!", x, y);
         break;
     }
     case Power::Lightning:
+        w.matter.setTemp(x, y, 3000);   // ~3000°C: đốt cháy, nung chảy cát thành thuỷ tinh
         w.ignite(x, y);
         sim.grid.query({x + 0.5f, y + 0.5f}, 1.5f, [&](Entity e, Vec2) { sim.kill(e, 3); });
         witness(sim, x, y, 2);
@@ -146,6 +167,56 @@ void applyPower(Simulation& sim, Power p, int x, int y, int r, int speciesId) {
         int n = std::max(1, r);
         for (int i = 0; i < n; ++i)
             sim.spawnCreature(speciesId, {x + 0.5f + sim.rng.range(-2.f, 2.f), y + 0.5f + sim.rng.range(-2.f, 2.f)});
+        break;
+    }
+    // ---------------- Vật chất ----------------
+    case Power::PourWater:
+    case Power::PourLava:
+    case Power::PourAcid:
+    case Power::PourOil:
+    case Power::Gunpowder: {
+        MatId m = p == Power::PourWater ? mat::Water : p == Power::PourLava ? mat::Basalt : p == Power::PourAcid ? mat::Acid
+                : p == Power::PourOil ? mat::Oil : mat::Gunpowder;
+        float t = p == Power::PourLava ? 1250.0f : 20.0f;   // dung nham = đá bazan nóng chảy
+        forDisc(sim, x, y, std::max(0, r - 1), [&](int tx, int ty) {
+            if (w.isWater(tx, ty) && p != Power::PourLava) return;
+            w.matter.addMatter(tx, ty, m, p == Power::Gunpowder ? 6 : 25, t);
+            if (p == Power::PourLava) w.matter.setTemp(tx, ty, 1250);
+        });
+        break;
+    }
+    case Power::HeatUp:
+        forDisc(sim, x, y, r, [&](int tx, int ty) { w.matter.addHeat(tx, ty, 120); });
+        break;
+    case Power::CoolDown:
+        forDisc(sim, x, y, r, [&](int tx, int ty) { w.matter.addHeat(tx, ty, -60); });
+        break;
+    case Power::Boulder: {
+        // Tảng đá rơi từ trên trời: trọng lực, nảy, lăn xuống dốc, phá nhà, đè sinh vật
+        PhysBody b;
+        b.kind = BodyKind::Boulder;
+        b.mat = mat::Stone;
+        b.mass = 80.0f * (1 + r * 0.3f);
+        b.radius = 0.6f;
+        b.pos = {x + 0.5f, y + 0.5f};
+        b.z = 25;
+        b.vel = {sim.rng.range(-3.f, 3.f), sim.rng.range(-3.f, 3.f)};
+        b.vz = -5;
+        b.sharpness = 0.6f;
+        b.life = 600;
+        sim.physics.spawn(b);
+        break;
+    }
+    case Power::OreVein: {
+        static const MatId ores[] = {mat::CopperOre, mat::TinOre, mat::IronOre, mat::Gold, mat::Sulfur, mat::Saltpeter};
+        MatId o = ores[sim.rng.irange(0, 5)];
+        if (!w.materials.exoticOres.empty() && sim.rng.chance(0.25f)) o = w.materials.exoticOres[sim.rng.irange(0, static_cast<int>(w.materials.exoticOres.size()) - 1)];
+        forDisc(sim, x, y, r, [&](int tx, int ty) {
+            Tile& t = w.at(tx, ty);
+            if (!w.walkable(tx, ty)) return;
+            t.ore = 150; t.oreMat = o; w.markDirty(tx, ty);
+        });
+        sim.chronicle.add(sim.tick, EventKind::Misc, "Thần tạo mạch " + w.materials[o].name, x, y);
         break;
     }
     default: break;

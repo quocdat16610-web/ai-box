@@ -20,17 +20,18 @@
 
 namespace wb {
 
-using WorldState = uint32_t;
+using WorldState = uint64_t;
 namespace ws {
-enum : uint32_t {
-    HasFood = 1u << 0, Fed = 1u << 1, Rested = 1u << 2, Safe = 1u << 3,
-    NearFood = 1u << 4, KnowsFood = 1u << 5, SeesPrey = 1u << 6, SeesCarrion = 1u << 7,
-    HasWood = 1u << 8, HasStone = 1u << 9, HasOre = 1u << 10, HasTool = 1u << 11,
-    HasWeapon = 1u << 12, KnowsTree = 1u << 13, KnowsStone = 1u << 14, KnowsOre = 1u << 15,
-    HasMaterials = 1u << 16, Built = 1u << 17, SeesEnemy = 1u << 18, EnemyDefeated = 1u << 19,
-    MateNearby = 1u << 20, Reproduced = 1u << 21, AllyNearby = 1u << 22, Socialized = 1u << 23,
-    Explored = 1u << 24, Stored = 1u << 25, Farmed = 1u << 26, Marked = 1u << 27,
-    Worshipped = 1u << 28, AtHome = 1u << 29, GroupFood = 1u << 30, Dominant = 1u << 31,
+enum : uint64_t {
+    HasFood = 1ull << 0, Fed = 1ull << 1, Rested = 1ull << 2, Safe = 1ull << 3,
+    NearFood = 1ull << 4, KnowsFood = 1ull << 5, SeesPrey = 1ull << 6, SeesCarrion = 1ull << 7,
+    HasWood = 1ull << 8, HasStone = 1ull << 9, HasOre = 1ull << 10, HasTool = 1ull << 11,
+    HasWeapon = 1ull << 12, KnowsTree = 1ull << 13, KnowsStone = 1ull << 14, KnowsOre = 1ull << 15,
+    HasMaterials = 1ull << 16, Built = 1ull << 17, SeesEnemy = 1ull << 18, EnemyDefeated = 1ull << 19,
+    MateNearby = 1ull << 20, Reproduced = 1ull << 21, AllyNearby = 1ull << 22, Socialized = 1ull << 23,
+    Explored = 1ull << 24, Stored = 1ull << 25, Farmed = 1ull << 26, Marked = 1ull << 27,
+    Worshipped = 1ull << 28, AtHome = 1ull << 29, GroupFood = 1ull << 30, Dominant = 1ull << 31,
+    Invented = 1ull << 32, Experimented = 1ull << 33, Produced = 1ull << 34,
 };
 }
 
@@ -38,9 +39,10 @@ enum class ActionId : uint8_t {
     EatCarried, EatHere, GoToFood, SearchFood, Forage, SearchPrey, Hunt, Scavenge,
     EatFromStore, GoHome, SleepAtHome, SleepHere, Flee, Fight, SeekEnemy,
     SeekMate, Mate, SeekAlly, Socialize, Explore,
-    GatherWood, GatherStone, GatherOre, CraftTool, CraftWeapon,
+    GatherWood, GatherStone, GatherOre, Craft, Invent,
     GatherMaterials, Build, DepositWood, DepositStone, DepositFood,
     Farm, MarkTerritory, Worship, ChallengeLeader,
+    Experiment, Produce, DepositOre,
     Count
 };
 constexpr int kActionCount = static_cast<int>(ActionId::Count);
@@ -69,7 +71,8 @@ const ActionDef& actionDef(ActionId a);
 // Mục tiêu (do Utility AI chọn) → trạng thái mong muốn cho GOAP.
 enum class GoalId : uint8_t {
     Idle, Eat, Rest, Flee, Defend, Reproduce, Socialize, Explore, Work,
-    CraftTool, CraftWeapon, Build, Farm, MarkTerritory, Worship, War, Dominate,
+    Craft, Invent, Build, Farm, MarkTerritory, Worship, War, Dominate,
+    Experiment, Produce,
     Count
 };
 constexpr int kGoalCount = static_cast<int>(GoalId::Count);

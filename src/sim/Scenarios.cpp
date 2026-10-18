@@ -5,13 +5,14 @@
 namespace wb {
 
 const char* scenarioName(Scenario s) {
-    static const char* n[] = {"Thế giới tự do", "Đàn sói tiến hoá", "Người nguyên thuỷ"};
+    static const char* n[] = {"Thế giới tự do", "Đàn sói tiến hoá", "Người nguyên thuỷ", "Hai bộ tộc song sinh"};
     return n[static_cast<int>(s)];
 }
 
 Scenario scenarioFromString(const std::string& s) {
     if (s == "wolves" || s == "wolf") return Scenario::WolfPack;
     if (s == "humans" || s == "primal") return Scenario::PrimalHumans;
+    if (s == "twins" || s == "twin") return Scenario::TwinTribes;
     return Scenario::Sandbox;
 }
 
@@ -100,6 +101,52 @@ void setupScenario(Simulation& sim, Scenario s) {
         spawnHerd(sim, sp::Deer, 40, x, y, 25);
         spawnHerd(sim, sp::Rabbit, 40, x, y, 25);
         spawnRandomly(sim, sp::Wolf, 4);
+        break;
+    }
+    case Scenario::TwinTribes: {
+        sim.cfg.learningRate = 2.0f;
+        sim.cfg.mutationRate = 1.5f;
+        World& w = sim.world;
+        // (A) Bờ núi lửa: gần hồ dung nham — đá vỏ chai, lưu huỳnh, bazan, hơi nước khi dung nham gặp nước
+        int ax = -1, ay = -1, bestA = 1 << 30;
+        for (int y = 6; y < w.height() - 6; ++y)
+            for (int x = 6; x < w.width() - 6; ++x) {
+                if (!(w.at(x, y).flags & kTileVolcanic)) continue;
+                for (int tries = 0; tries < 30; ++tries) {
+                    int px = x + sim.rng.irange(-9, 9), py = y + sim.rng.irange(-9, 9);
+                    if (!w.inBounds(px, py) || !w.walkable(px, py)) continue;
+                    int d = (px - x) * (px - x) + (py - y) * (py - y);
+                    if (d >= 25 && d < bestA) { bestA = d; ax = px; ay = py; }
+                }
+            }
+        if (ax < 0) findHabitat(sim, ax, ay, true);
+        // (B) Rừng lạnh ven sông: ô có nhiệt độ thấp, nhiều cây, cách xa (A)
+        int bx = -1, by = -1;
+        float bestB = -1e9f;
+        for (int tries = 0; tries < 3000; ++tries) {
+            int x = sim.rng.irange(8, w.width() - 9), y = sim.rng.irange(8, w.height() - 9);
+            if (!w.walkable(x, y) || (x - ax) * (x - ax) + (y - ay) * (y - ay) < 50 * 50) continue;
+            float cold = -w.matter.ambient(w, x, y);
+            int trees = 0, water = 0;
+            for (int dy = -5; dy <= 5; ++dy)
+                for (int dx = -5; dx <= 5; ++dx) { trees += w.at(x + dx, y + dy).wood > 20; water += w.isWater(x + dx, y + dy); }
+            float score = cold * 2 + trees * 0.6f + std::min(water, 10) * 1.0f;
+            if (score > bestB) { bestB = score; bx = x; by = y; }
+        }
+        if (bx < 0) findHabitat(sim, bx, by, false, ax, ay, 40);
+        // Cùng một nhóm sáng lập (bộ gen nhân bản) cho cả hai nơi
+        std::vector<Genome> founders;
+        for (int i = 0; i < 12; ++i) {
+            Genome g = sim.species[sp::Human].baseGenome;
+            for (float& v : g.g) v = clamp01(v + sim.rng.gauss(0.05f));
+            founders.push_back(g);
+        }
+        for (auto [cx, cy] : {std::pair<int, int>{ax, ay}, std::pair<int, int>{bx, by}}) {
+            for (const Genome& g : founders) sim.spawnCreature(sp::Human, {cx + sim.rng.range(-2.f, 2.f), cy + sim.rng.range(-2.f, 2.f)}, &g);
+            spawnHerd(sim, sp::Deer, 30, cx, cy, 18);
+            spawnHerd(sim, sp::Rabbit, 30, cx, cy, 18);
+        }
+        sim.chronicle.add(sim.tick, EventKind::Misc, "Hai nhóm song sinh được thả xuống: (A) bờ núi lửa, (B) rừng lạnh ven sông", ax, ay);
         break;
     }
     default: break;

@@ -17,7 +17,11 @@ namespace wb {
 
 class Simulation;
 
-enum class Scenario { Sandbox, WolfPack, PrimalHumans, Count };
+//   TwinTribes  : HAI nhóm người nhân bản y hệt nhau (cùng bộ gen, cùng tri thức ban
+//                 đầu) đặt ở hai môi trường trái ngược — bờ núi lửa và rừng lạnh ven
+//                 sông. Mọi khác biệt về sau là do môi trường + trải nghiệm + ngẫu nhiên:
+//                 ví dụ trực quan về sự phát triển KHÔNG đoán trước được.
+enum class Scenario { Sandbox, WolfPack, PrimalHumans, TwinTribes, Count };
 const char* scenarioName(Scenario s);
 Scenario scenarioFromString(const std::string& s);
 // Áp dụng kịch bản lên mô phỏng đã reset (có thể chỉnh cfg tốc độ tiến hoá).

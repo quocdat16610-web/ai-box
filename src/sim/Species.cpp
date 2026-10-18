@@ -80,6 +80,17 @@ void SpeciesRegistry::initDefaults() {
     goblin.r = 160; goblin.g = 200; goblin.b = 60; goblin.adultYears = 6; goblin.maxAgeYears = 35;
     goblin.baseHp = 35; goblin.baseDamage = 5; goblin.gestationTicks = 200; goblin.litterMax = 2;
     defs_.push_back(goblin);
+
+    // Gen sinh học bổ sung: khéo tay, kích thước, bơi lội — cũng tiến hoá qua các thế hệ
+    for (auto& d : defs_) {
+        d.baseGenome[Gene::Dexterity] = d.dexterous ? 0.8f : 0.08f;
+        d.baseGenome[Gene::Size] = 0.5f;
+        d.baseGenome[Gene::Swimming] = 0.3f;
+    }
+    defs_[sp::Wolf].baseGenome[Gene::Swimming] = 0.45f;
+    defs_[sp::Bear].baseGenome[Gene::Swimming] = 0.55f;
+    defs_[sp::Deer].baseGenome[Gene::Swimming] = 0.4f;
+    defs_[sp::Wolf].baseGenome[Gene::Dexterity] = 0.15f; // chân trước sói linh hoạt hơn hươu một chút
 }
 
 bool SpeciesRegistry::canHunt(int a, int b) const {

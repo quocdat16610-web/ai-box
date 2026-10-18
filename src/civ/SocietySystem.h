@@ -26,6 +26,7 @@ private:
     void formGroups();
     void updateGroup(Group& g);
     void recountBuildings(Group& g);
+    void aggregateKnowhow(Group& g);
     void claimTerritory(Group& g);
     void advanceStage(Group& g);
     void enactLaws(Group& g);

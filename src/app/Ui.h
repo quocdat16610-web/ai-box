@@ -19,8 +19,8 @@
 
 namespace wb {
 
-enum class ToolCategory : uint8_t { Inspect, Terrain, Life, Disaster, Weather, Divine, Count };
-enum class SidePanel : uint8_t { None, Creature, Group, Chronicle, Species };
+enum class ToolCategory : uint8_t { Inspect, Terrain, Matter, Life, Disaster, Weather, Divine, Count };
+enum class SidePanel : uint8_t { None, Creature, Group, Chronicle, Species, Chemistry };
 
 struct App {
     std::unique_ptr<Simulation> sim;

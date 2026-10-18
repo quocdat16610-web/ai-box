@@ -10,6 +10,7 @@ namespace wb {
 enum class Terrain : uint8_t {
     DeepWater, ShallowWater, Sand, Grass, Forest, Jungle, Desert, Savanna,
     Hill, Mountain, Snow, Tundra, Swamp, Lava, Ash, Farmland, Road,
+    Ice, Basalt, Glass,   // sinh ra từ vật lý: nước đóng băng, dung nham nguội, cát nung chảy
     Count
 };
 
@@ -41,6 +42,9 @@ inline const TerrainInfo& terrainInfo(Terrain t) {
         {"Tro tàn",      true,  1.2f, 0.05f, 0.2f,  80,  75,  72},
         {"Ruộng",        true,  1.1f, 1.0f,  0.1f, 150, 120,  60},
         {"Đường",        true,  0.6f, 0.0f,  0.1f, 165, 140, 100},
+        {"Băng",         true,  1.6f, 0.0f, -1.0f, 200, 230, 245},
+        {"Đá bazan",     true,  1.3f, 0.05f, 0.2f,  70,  70,  78},
+        {"Thuỷ tinh",    true,  1.1f, 0.0f,  0.3f, 170, 220, 225},
     };
     return table[static_cast<int>(t)];
 }
@@ -49,15 +53,18 @@ inline const TerrainInfo& terrainInfo(Terrain t) {
 enum class Building : uint8_t {
     None, Den, Nest, Hut, House, StoneHouse, Wall, Tower, Bridge,
     Granary, Workshop, Forge, Temple, TownHall, Castle, ScentMark, Totem,
+    Hearth,   // bếp lửa: nguồn nhiệt ~700°C (nấu ăn, sưởi, nung thử nghiệm)
     Count
 };
 
 struct BuildingInfo {
     const char* name;
-    int wood, stone, ore;    // chi phí vật liệu
-    int requiredTech;        // id Tech cần biết (-1 = bản năng, ai cũng làm được)
+    int wood, stone, metal;  // chi phí vật liệu (metal = bất kỳ kim loại nào trong kho)
+    int requiredTech;        // tập quán văn hoá cần biết (-1 = không cần)
     int housing;             // số dân có thể ở
     bool blocksMove;
+    float minCut;            // năng lực cắt tối thiểu của công cụ (gia công gỗ/đá) — quy luật vật lý thay cho tech tree
+    bool flammable;          // làm bằng vật liệu cháy được (gỗ) → lửa thiêu rụi được
 };
 
 const BuildingInfo& buildingInfo(Building b); // định nghĩa trong World.cpp (cần Tech ids)
