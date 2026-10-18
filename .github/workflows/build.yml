@@ -32,6 +32,24 @@ jobs:
             build/worldbox
             build/worldbox_sim
 
+  windows:
+    name: Windows (MSVC) + kiểm thử mô phỏng
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cấu hình CMake (Visual Studio)
+        run: cmake -S . -B build
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Kiểm thử kịch bản
+        run: ctest --test-dir build -C Release --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: worldbox-windows
+          path: |
+            build/Release/worldbox.exe
+            build/Release/worldbox_sim.exe
+
   android:
     name: Android APK
     runs-on: ubuntu-latest

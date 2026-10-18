@@ -14,6 +14,13 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# MSVC (Windows): mã nguồn có chú thích & chuỗi tiếng Việt UTF-8 → bắt buộc /utf-8;
+# NOMINMAX tránh macro min/max của windows.h phá std::min/std::max.
+if (MSVC)
+    add_compile_options(/utf-8 /bigobj /MP)
+    add_compile_definitions(NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+
 option(WB_BUILD_GAME "Build bản có đồ hoạ (raylib)" ON)
 option(WB_BUILD_HEADLESS "Build trình chạy headless" ON)
 
@@ -88,6 +95,13 @@ if (WB_BUILD_GAME)
         target_link_libraries(worldbox PRIVATE wb_core raylib)
         if (APPLE)
             target_link_libraries(worldbox PRIVATE "-framework IOKit" "-framework Cocoa" "-framework OpenGL")
+        endif()
+        if (WIN32)
+            # Game trên Windows: mở cửa sổ đồ hoạ, không bật thêm cửa sổ console đen
+            set_target_properties(worldbox PROPERTIES WIN32_EXECUTABLE ON)
+            if (MSVC)
+                target_link_options(worldbox PRIVATE /ENTRY:mainCRTStartup)
+            endif()
         endif()
     endif()
 endif()
