@@ -90,4 +90,5 @@ docs/          Tài liệu kiến trúc chi tiết
 ```
 
 📖 Đọc **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** để hiểu sơ đồ hệ thống, sơ đồ lớp, pipeline AI,
-cơ chế tiến hoá, các giai đoạn văn minh và hai ví dụ chi tiết (đàn sói, người nguyên thuỷ).
+hệ vật lý – hoá học, công nghệ mở, các giai đoạn văn minh và ba ví dụ chạy thật (đàn sói, người nguyên thuỷ,
+hai bộ tộc song sinh phát triển theo hai hướng khó đoán).

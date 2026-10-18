@@ -363,16 +363,79 @@ Vì vậy tiến bộ tự **xâu chuỗi**: công cụ tốt → gia công đư
 Săn chung → *Săn theo bầy* → được dạy lại cho cả bầy → sói thông minh ăn no, sinh nhiều → trí tuệ quần thể tăng →
 *Thứ bậc* → *Đánh dấu lãnh thổ* → **Bộ tộc sói** (lãnh thổ có viền, luật *Đầu đàn ăn trước*, *Chia sẻ con mồi*,
 *Bảo vệ lãnh thổ*) → hang ổ → tôn giáo → loài sói mới.
-<!-- WOLF_RESULTS -->
+**Kết quả chạy thật** (`worldbox_sim --scenario wolves --years 40 --seed 3`):
+
+| Năm | Sự kiện (trích biên niên sử) |
+|----|----|
+| 0 | Thêrthêski phát minh *Thứ bậc xã hội*; Thi phát minh *Đánh dấu lãnh thổ* |
+| 3 | Krusuis phát minh *Nơi trú ẩn* (hang ổ) |
+| 9 | Kă (bầy Kruku) phát minh *Săn theo bầy* — lan dần sang các bầy khác qua dạy/bắt chước |
+| 11 | **Huhal trở thành Bộ tộc sói** — thể chế *Đầu đàn cai trị*, luật *Bảo vệ lãnh thổ*; cùng năm thành **Làng hang ổ** (12 cá thể) |
+| 12–19 | Kraiskôs, Fohăis lần lượt thành bộ tộc → làng hang ổ |
+| 25 | Huhal **suy tàn** (thiếu mồi, mất thành viên) — văn minh có thể đi lùi |
+| 29 | Sa (bầy Krănô) phát minh *Ngôn ngữ*; Aeaaeă phát minh *Tôn giáo* — sói có tín ngưỡng |
+| 40 | 493 sói, 69 nhóm; bầy giỏi nhất trí tuệ TB 0.54 (bầy đầu tiên ~0.10) |
+
+Loài sói mới (chi trước cầm nắm) chỉ xuất hiện khi một nhánh **bị cách ly đủ lâu** (≥ 6 thế hệ, không có
+nhóm cùng loài trong bán kính 35 ô) — thường sau 60–100 năm hoặc khi người chơi dùng quyền năng chia cắt bản đồ.
 
 ### 10.2 Người nguyên thuỷ (`--scenario humans`)
-<!-- HUMAN_RESULTS -->
+Nhóm 14 người trắng tay; không có tech tree — mọi công cụ/quy trình dưới đây do chính họ nghĩ ra hoặc **quan sát
+từ phản ứng hoá học thật** trong lò. **Kết quả chạy thật** (`worldbox_sim --scenario humans --years 120 --seed 8`):
+
+| Năm | Sự kiện (trích biên niên sử) |
+|----|----|
+| 1–2 | Cuốc đá (Đào 1.7), giáo mũi đá (Đâm 1.5) — *lần đầu trên thế giới* |
+| 8 | Ritai thành **Làng** (12 dân) |
+| 15 | Elele chế **mồi lửa** Gỗ (cán) + Đá (cục) → Tạo lửa 249 (đánh lửa bằng ma sát) |
+| 25 | Liyeli thấy gỗ âm ỉ thiếu oxi → hiểu quy trình **Nhiệt phân: Gỗ → Than củi** |
+| 28–32 | Liyeli thiết kế **lò tường đá** (1025°C) → Ritai dựng lò luyện đầu tiên |
+| 33 | Eli quan sát **nung vôi**: Đá vôi → Vôi sống |
+| 39 | Kraiylifai (Elikri) hiểu **luyện đồng**: Than củi + Quặng đồng → Đồng |
+| 43 | Hiele → Thị trấn → **QUỐC GIA "Thánh quốc Hetaim"** (thần quyền, ngôn ngữ Yaikri) |
+| 45 | Lidre lập **"Thánh quốc Rikri"**; năm 47 Rikri dựng lò 1164°C |
+| 48 | Thaithri thành **Thành phố** (57 dân) |
+| 64 | Laiyai thấy dung nham gặp nước → hiểu **tôi nguội: Bazan → Đá vỏ chai** |
+| 73 | Drili (Rikri) hiểu **luyện thiếc**: Than củi + Quặng thiếc → Thiếc |
+| 120 | 1742 người, 41 nhóm, 2 quốc gia; 368 thiết kế, 8 quy trình; 1492 thí nghiệm, 1305 mẻ sản xuất trong lò |
+
+Dân số theo thời gian: 136 (năm 20) → 316 (40) → 643 (60) → 1139 (80) → 1534 (100) → 1742 (120).
+Trình độ công nghệ các nhóm: 86–114 (không có trần). Đồng/thiếc đã hiểu được nhưng chưa đủ nhiều để thay đá làm
+công cụ chính nên tên thời đại vẫn là "Đá" — đúng như lịch sử thật: biết luyện kim ≠ bước vào thời đại kim loại
+(xem 10.3: thiếu gỗ làm than là nút thắt).
 
 ### 10.3 Phát triển KHÓ DỰ ĐOÁN: "Hai bộ tộc song sinh" (`--scenario twins`)
 Hai nhóm người **nhân bản y hệt** (cùng 12 bộ gen, cùng tri thức ban đầu) được thả cùng lúc: (A) cạnh **hồ dung nham
 núi lửa** — nhiều bazan, đá vỏ chai, lưu huỳnh, hơi nóng; (B) **rừng lạnh ven sông** — gỗ, đất sét, băng, mùa đông khắc nghiệt.
 Không có dòng code nào nói nhóm nào phải phát triển cái gì.
-<!-- TWIN_RESULTS -->
+**Kết quả chạy thật** (`worldbox_sim --scenario twins --years 120 --seed 21`; A thả tại (72,136), B tại (103,62)).
+Dòng dõi được truy theo `parentGroup` (nhóm tách ra vẫn biết tổ tiên):
+
+| | **Dòng A — bờ núi lửa** (nhóm gốc #0) | **Dòng B — rừng lạnh ven sông** (nhóm gốc #1) |
+|---|---|---|
+| Vật liệu đầu tiên làm "thời đại" | Đá (năm 10) | **Sợi thực vật** (năm 18, Elambesh) — dây, túi, ná |
+| Lò luyện đầu tiên | **năm 21** (1102°C) | năm 48 (Heha, sau khi di cư xuống vùng ấm 36°C) |
+| Quy trình hoá học | Nung vôi (21), **luyện đồng (24)**, nhiệt phân, tro–nước | Chỉ nhiệt phân & nước tro trong 50 năm đầu |
+| Thiết kế đặc trưng | Chuỳ đầu **quặng đồng**, lò tường đá, cuốc mũi đá cán gỗ | **Thuyền** Gỗ (ván) + Xương (64.3), **cung 5 bộ phận** (16.0), xe bánh diêm tiêu |
+| Xã hội | Druxkra → Thị trấn → **Quốc gia "Thánh quốc Kruxkrank"** (năm 59) | Đông dân hơn (Bôthmô 105, Elambesh 66) nhưng chỉ Làng/Bộ lạc |
+| Kho (năm 120) | Đá vôi 1298, **quặng đồng 939**, đá vỏ chai, lưu huỳnh, 2 khoáng chất lạ (Thalur, Midra) — **gỗ 0** | Gỗ 126–238, đất sét, sợi — gần như **không có quặng** |
+| Trình độ công nghệ | 73–100 | 47–96 |
+
+Không có dòng code nào nói "người núi lửa phải luyện kim" hay "người rừng phải đóng thuyền". Khác biệt sinh ra
+từ chuỗi nhân–quả vật lý:
+
+1. **A** sống giữa đá vôi, bazan, quặng → công cụ đá tốt sớm → trải nghiệm nhiệt quanh dung nham & bếp lửa → hiểu khái niệm
+   *Nóng chảy/Cách nhiệt* → thiết kế lò tường đá vượt 900°C → mẻ thí nghiệm đầu tiên đổ quặng + than vào lò →
+   **tận mắt thấy đồng chảy ra** → học quy trình luyện đồng.
+2. Nhưng quanh núi lửa **không có cây**: kho gỗ của A luôn về 0, lò chỉ đốt được khi có người kiếm củi, than củi
+   (chất khử) khan hiếm → quặng đồng chất đống 939 đơn vị mà đồng thành phẩm rất ít → A **biết luyện kim nhưng
+   bị kẹt ở thời đại Đá** — một "nút thắt sinh thái" không ai lập trình.
+3. **B** có gỗ, sợi, sông nước → nhu cầu "Nổi trên nước" và "Bắn xa" bị bức xúc nhiều nhất → sáng tạo thuyền, cung
+   phức hợp; khi một nhánh (Heha) di cư tới vùng có quặng thì lập tức xây lò (năm 48) và nhận về vôi sống & đồng.
+4. Mô phỏng tất định (cùng seed → cùng lịch sử, bất kể số luồng), nhưng chỉ một thay đổi nhỏ về luật chơi hay seed là
+   lịch sử rẽ hướng khác hẳn. Trong các lần chạy thử khi cân bằng game, có lần A
+   bước vào **Thời đại Đồng** năm 72 rồi tụt lại Thời đại Đá năm 87 khi cạn gỗ; có lần một nhánh B lập quốc gia
+   riêng (Thánh quốc Groyou, 218 dân) nhờ kho gỗ 3990 đơn vị nhưng không có một quy trình hoá học nào.
 
 ---
 
