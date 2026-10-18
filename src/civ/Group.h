@@ -135,6 +135,8 @@ struct Group {
     bool hasHearth = false;
     int hearthX = -1, hearthY = -1, forgeX = -1, forgeY = -1;
     float forgeHeat = 0;
+    bool forgeAnnounced = false;
+    long forgeLitUntil = 0;        // lò chỉ đốt nhiên liệu khi có người đang dùng (tới tick này)   // đã ghi biên niên sử "lò luyện đầu tiên" chưa
 
     // Công trình (đếm lại định kỳ)
     int dwellings = 0, housing = 0, buildingsTotal = 0;

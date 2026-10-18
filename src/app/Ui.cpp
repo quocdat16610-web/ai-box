@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdarg>
 #include <algorithm>
+#include <iterator>
 
 namespace wb {
 
@@ -499,8 +500,25 @@ void drawChemistryPanel(App& app, Rectangle r) {
     w.gap();
     w.line("Phản ứng gần đây:", kAccent);
     const auto& rec = G.recent();
+    // Phân huỷ xác chết xảy ra liên tục → chỉ đếm, không liệt kê (tránh che các phản ứng thú vị)
+    int decays = 0;
+    for (const auto& ev : rec) decays += ev.kind == ReactionKind::Decay;
+    if (decays > 0) w.line(fmt("  (+%d lần phân huỷ xác/chất hữu cơ)", decays), Color{170, 170, 170, 255});
+    auto sameReaction = [](const ReactionEvent& a, const ReactionEvent& b) {
+        return a.kind == b.kind && std::equal(a.in, a.in + 3, b.in) && std::equal(a.out, a.out + 2, b.out);
+    };
     for (auto it = rec.rbegin(); it != rec.rend() && w.y < r.y + r.height - w.fs * 2; ++it) {
+        if (it->kind == ReactionKind::Decay) continue;
+        // Gộp các phản ứng giống hệt nhau liền kề thành một dòng "×N"
+        int same = 1;
+        for (auto nx = std::next(it); nx != rec.rend(); ++nx) {
+            if (nx->kind == ReactionKind::Decay) continue;
+            if (!sameReaction(*it, *nx)) break;
+            it = nx;
+            ++same;
+        }
         std::string t = fmt("[%ld] ", it->tick / kTicksPerYear) + reactionName(it->kind) + ": " + it->describe(R);
+        if (same > 1) t = fmt("×%d ", same) + t;
         while (t.size() > 4 && ui::measureText(t, w.fs * 0.9f) > w.w) {
             t.pop_back();
             while (!t.empty() && (static_cast<unsigned char>(t.back()) & 0xC0) == 0x80) t.pop_back();

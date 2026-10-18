@@ -45,7 +45,7 @@ std::vector<int> vietnameseCodepoints() {
     for (int c = 32; c < 127; ++c) cps.push_back(c);
     const char* extra =
         "àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ"
-        "ÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ→←↑↓•…—–“”·×";
+        "ÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ→←↑↓•…—–“”·×°²³½₀₁₂₃₄−≈≤≥⚗";
     const char* p = extra;
     while (*p) { int c; p += decodeUtf8(p, c); cps.push_back(c); }
     return cps;
@@ -60,7 +60,11 @@ std::string stripDiacritics(const std::string& s) {
         int n = decodeUtf8(p, cp);
         if (cp < 128) out += static_cast<char>(cp);
         else if (cp == 0x2192) out += "->";
-        else if (cp == 0x2014 || cp == 0x2013) out += "-";
+        else if (cp == 0x2014 || cp == 0x2013 || cp == 0x2212) out += "-";
+        else if (cp >= 0x2080 && cp <= 0x2089) out += static_cast<char>('0' + (cp - 0x2080));   // chỉ số dưới: CO₂ → CO2
+        else if (cp == 0xB2) out += '2';
+        else if (cp == 0xB3) out += '3';
+        else if (cp == 0xB0) out += "o";   // °C → oC
         else out += baseLetter(cp);
         p += n;
     }

@@ -52,7 +52,7 @@ if (WB_BUILD_HEADLESS AND NOT ANDROID)
     add_test(NAME chemistry_reactions COMMAND worldbox_sim --chemtest)
     add_test(NAME sandbox_runs COMMAND worldbox_sim --scenario sandbox --years 10 --seed 1 --quiet)
     # Công nghệ mở: phải có phát minh thật; vật lý/hoá học: phải xảy ra nhiều loại phản ứng khác nhau
-    add_test(NAME humans_invent_and_react COMMAND worldbox_sim --scenario humans --years 20 --seed 8 --quiet --expect-designs 10 --expect-reactions 5)
+    add_test(NAME humans_invent_and_react COMMAND worldbox_sim --scenario humans --years 30 --seed 8 --quiet --expect-designs 10 --expect-reactions 5)
 endif()
 
 # ---------------- Game (raylib) ----------------

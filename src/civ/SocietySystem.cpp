@@ -231,7 +231,10 @@ void SocietySystem::recountBuildings(Group& g) {
         if (g.bestDesign[static_cast<int>(Purpose::Heat)] >= 0) best = sim_.designs[g.bestDesign[static_cast<int>(Purpose::Heat)]].value(Purpose::Heat);
         g.forgeHeat = std::max(g.forgeHeat, best);
         float heat = g.forgeHeat;
-        if (g.takeMat(mat::Charcoal, 1) > 0) heat += 150;
+        // Lò chỉ được nhóm khi có người đang luyện/thử nghiệm — không đốt củi vô ích.
+        // Chỉ đốt than khi còn dư — giữ lại một ít làm chất khử cho luyện kim.
+        if (sim_.tick >= g.forgeLitUntil) heat = 0;
+        else if (g.matCount(mat::Charcoal) > 8 && g.takeMat(mat::Charcoal, 1) > 0) heat += 150;
         else if (g.wood >= 2) g.wood -= 2;
         else heat = 0;
         if (heat > 0) G.setHeatSource(g.forgeX, g.forgeY, heat, g.id);

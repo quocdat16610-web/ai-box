@@ -380,6 +380,7 @@ void Renderer::drawOverlay(Simulation& sim, const Camera2D& cam, const RenderOpt
         for (auto it = rec.rbegin(); it != rec.rend() && shown < 14; ++it) {
             long age = sim.tick - it->tick;
             if (age > 200) break;
+            if (it->kind == ReactionKind::Decay) continue;   // phân huỷ xác: quá nhiều, bỏ qua nhãn
             Vector2 sp = GetWorldToScreen2D({(it->x + 0.5f) * S, (it->y + 0.5f) * S}, cam);
             if (sp.x < 0 || sp.y < 0 || sp.x > GetScreenWidth() || sp.y > GetScreenHeight()) continue;
             std::string t = std::string(reactionName(it->kind)) + ": " + it->describe(sim.world.materials);

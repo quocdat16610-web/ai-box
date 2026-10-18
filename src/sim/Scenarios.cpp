@@ -146,7 +146,10 @@ void setupScenario(Simulation& sim, Scenario s) {
             spawnHerd(sim, sp::Deer, 30, cx, cy, 18);
             spawnHerd(sim, sp::Rabbit, 30, cx, cy, 18);
         }
-        sim.chronicle.add(sim.tick, EventKind::Misc, "Hai nhóm song sinh được thả xuống: (A) bờ núi lửa, (B) rừng lạnh ven sông", ax, ay);
+        sim.chronicle.add(sim.tick, EventKind::Misc,
+                          "Hai nhóm song sinh được thả xuống: (A) bờ núi lửa (" + std::to_string(ax) + "," + std::to_string(ay) +
+                              "), (B) rừng lạnh ven sông (" + std::to_string(bx) + "," + std::to_string(by) + ")",
+                          ax, ay);
         break;
     }
     default: break;

@@ -204,6 +204,21 @@ int main(int argc, char** argv) {
         std::printf("* %s [%s] — %s, %d thành viên, %d công trình, lãnh thổ %d ô, trí tuệ TB %.2f, thế hệ %d\n    Tập quán: %s\n    Luật: %s\n",
                     g.displayName().c_str(), sim.species[g.species].name.c_str(), stageName(g.stage, g.animal), g.population(),
                     g.buildingsTotal, g.territoryTiles, g.avgIntellect, g.generationDepth, techs.c_str(), laws.c_str());
+        {
+            // Môi trường quanh nơi ở: giúp so sánh các nhóm (vd. hai bộ tộc song sinh)
+            int volc = 0, trees = 0, root = g.id;
+            for (int dy = -15; dy <= 15; ++dy)
+                for (int dx = -15; dx <= 15; ++dx) {
+                    if (!sim.world.inBounds(g.homeX + dx, g.homeY + dy)) continue;
+                    const Tile& t = sim.world.at(g.homeX + dx, g.homeY + dy);
+                    volc += (t.flags & kTileVolcanic) != 0;
+                    trees += t.wood > 20;
+                }
+            for (int guard = 0; guard < 64 && root >= 0 && root < static_cast<int>(sim.groups.size()) && sim.groups[root].parentGroup >= 0; ++guard)
+                root = sim.groups[root].parentGroup;
+            std::printf("    Nơi ở (%d,%d) · nhiệt độ nền %.0f°C · ô núi lửa (r=15): %d · ô có cây: %d · dòng dõi từ nhóm #%d\n",
+                        g.homeX, g.homeY, sim.world.matter.ambient(sim.world, g.homeX, g.homeY), volc, trees, root);
+        }
         std::string concepts;
         for (int c = 0; c < kConceptCount; ++c) if (g.concepts.test(c)) { concepts += conceptName(static_cast<Concept>(c)); concepts += ", "; }
         std::printf("    %s · trình độ công nghệ %.1f · %zu vật liệu, %zu thiết kế, %zu quy trình\n    Khái niệm: %s\n",

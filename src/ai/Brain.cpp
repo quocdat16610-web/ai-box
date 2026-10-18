@@ -396,7 +396,8 @@ void scoreGoals(Simulation& sim, Entity e, Mind& m, const Body& body, const Inve
         float r = 0.25f + gn[Gene::Fertility] * 0.4f + (so.children < 3 ? 0.2f : 0.0f); // bản năng duy trì nòi giống
         // Loài có trí khôn: kế hoạch hoá theo chỗ ở (nhà) và lương thực dự trữ của nhóm
         if (g && sd.dexterous) {
-            int room = g->stage >= Stage::Tribe ? g->housing + 6 : 14;
+            // Chưa có nhà thì vẫn sống được kiểu du mục (~14 người); có nhà rồi thì nhà ở quyết định quy mô
+            int room = std::max(14, g->housing + 6);
             if (g->population() > room) r *= 0.3f;
             if (g->stage >= Stage::Village && g->food < g->population()) r *= 0.6f;
         }
@@ -1189,6 +1190,16 @@ Res exec(Ctx& c, ActionId a) {
         if (sx < 0) return Res::Failed;
         if (!moveTo(sim, c.e, c.tr, c.body, m, tileCenter(sx, sy), 1.6f)) return c.tr.stuck > 60 ? Res::Failed : Res::Running;
         MatterGrid& G = sim.world.matter;
+        if (useForge && m.actionTicks == 0 && c.g->forgeLitUntil < sim.tick + 50) {
+            // Nhóm lò: đốt nhiên liệu ngay (lần sau SocietySystem tiếp nhiên liệu khi còn người dùng)
+            c.g->forgeLitUntil = sim.tick + 400;
+            float heat = c.g->forgeHeat;
+            if (c.g->matCount(mat::Charcoal) > 8 && c.g->takeMat(mat::Charcoal, 1) > 0) heat += 150;
+            else if (c.g->wood >= 2) c.g->wood -= 2;
+            else if (c.inv.wood >= 2) c.inv.wood -= 2;
+            else heat = 0;
+            if (heat > 0) sim.world.matter.setHeatSource(sx, sy, heat, c.g->id);
+        }
         if (m.actionTicks == 0) {
             // Nạp nguyên liệu THẬT vào ô lò → hoá học trong MatterGrid tự diễn ra
             std::vector<MatId> load;
@@ -1232,7 +1243,8 @@ Res exec(Ctx& c, ActionId a) {
             if (d.phaseAt(G.temp(sx, sy)) == Phase::Gas) continue;
             int n = G.takeMatter(sx, sy, got, slot.amount);
             c.g->addMat(got, n);
-            if (got == mat::Wood || got == mat::Charcoal) continue;   // nhiên liệu chưa cháy hết
+            const bool wantedOut = pr && std::find(pr->outputs.begin(), pr->outputs.end(), got) != pr->outputs.end();
+            if (!wantedOut && (got == mat::Wood || got == mat::Charcoal)) continue;   // nhiên liệu chưa cháy hết
             if (m.know.learnMat(got)) m.think("Thu được thứ mới: %s", d.name.c_str());
             collected += n;
         }
@@ -1297,9 +1309,12 @@ Res exec(Ctx& c, ActionId a) {
             c.g->forgeX = m.tx; c.g->forgeY = m.ty;
             int gd = c.g->bestDesign[static_cast<int>(Purpose::Heat)];
             c.g->forgeHeat = std::max(m.know.bestValue(sim.designs, Purpose::Heat), gd >= 0 ? sim.designs[gd].value(Purpose::Heat) : 0.0f);
-            sim.chronicle.add(sim.tick, EventKind::Discovery,
-                              c.g->displayName() + std::string(" dựng lò luyện đầu tiên (đạt ") + std::to_string(static_cast<int>(c.g->forgeHeat)) + "°C)",
-                              m.tx, m.ty);
+            if (!c.g->forgeAnnounced) {
+                sim.chronicle.add(sim.tick, EventKind::Discovery,
+                                  c.g->displayName() + std::string(" dựng lò luyện đầu tiên (đạt ") + std::to_string(static_cast<int>(c.g->forgeHeat)) + "°C)",
+                                  m.tx, m.ty);
+                c.g->forgeAnnounced = true;
+            }
         }
         if (m.buildType == Building::Bridge) m.blockedWater.reset();
         c.so.status = std::min(1.0f, c.so.status + 0.02f);
