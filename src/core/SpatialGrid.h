@@ -16,8 +16,10 @@ namespace wb {
 
 class SpatialGrid {
 public:
-    void init(int worldW, int worldH, int cellSize) {
+    void init(int worldW, int worldH, int cellSize, bool wrapX = false) {
         cellSize_ = cellSize;
+        worldW_ = static_cast<float>(worldW);
+        wrap_ = wrapX && worldW % cellSize == 0;   // quấn vòng chính xác khi chiều rộng chia hết cho cỡ ô
         cols_ = (worldW + cellSize - 1) / cellSize;
         rows_ = (worldH + cellSize - 1) / cellSize;
         start_.assign(cols_ * rows_ + 1, 0);
@@ -40,27 +42,42 @@ public:
 
     // Gọi f(entity, pos) cho mọi entity trong hình vuông bao quanh vòng tròn bán kính r.
     // (Hàm gọi tự lọc theo khoảng cách thật nếu cần.)
+    // Trên hành tinh quấn vòng: các ô cột bên kia "đường đổi ngày" cũng được quét, và vị trí
+    // trả về đã được dời ±chiều rộng thế giới để nằm CẠNH tâm (tính hướng/khoảng cách đúng).
     template <class F> void query(Vec2 center, float r, F&& f) const {
-        int x0 = std::max(0, static_cast<int>((center.x - r) / cellSize_));
         int y0 = std::max(0, static_cast<int>((center.y - r) / cellSize_));
-        int x1 = std::min(cols_ - 1, static_cast<int>((center.x + r) / cellSize_));
         int y1 = std::min(rows_ - 1, static_cast<int>((center.y + r) / cellSize_));
+        int x0 = static_cast<int>(std::floor((center.x - r) / cellSize_));
+        int x1 = static_cast<int>(std::floor((center.x + r) / cellSize_));
+        if (!wrap_) { x0 = std::max(0, x0); x1 = std::min(cols_ - 1, x1); }
+        else if (x1 - x0 >= cols_) { x0 = 0; x1 = cols_ - 1; }
         float r2 = r * r;
         for (int cy = y0; cy <= y1; ++cy)
-            for (int cx = x0; cx <= x1; ++cx) {
+            for (int cxu = x0; cxu <= x1; ++cxu) {
+                int cx = cxu, shift = 0;
+                if (wrap_) {
+                    if (cx < 0) { cx += cols_; shift = -1; }
+                    else if (cx >= cols_) { cx -= cols_; shift = 1; }
+                }
                 int c = cy * cols_ + cx;
-                for (int k = start_[c]; k < start_[c + 1]; ++k)
-                    if (dist2(entries_[k].second, center) <= r2) f(entries_[k].first, entries_[k].second);
+                for (int k = start_[c]; k < start_[c + 1]; ++k) {
+                    Vec2 p = entries_[k].second;
+                    p.x += shift * worldW_;
+                    float dx = p.x - center.x, dy = p.y - center.y;
+                    if (dx * dx + dy * dy <= r2) f(entries_[k].first, p);
+                }
             }
     }
 
 private:
     int cellIndex(Vec2 p) const {
-        int cx = std::clamp(static_cast<int>(p.x) / cellSize_, 0, cols_ - 1);
+        int cx = std::clamp(static_cast<int>(std::floor(p.x)) / cellSize_, 0, cols_ - 1);
         int cy = std::clamp(static_cast<int>(p.y) / cellSize_, 0, rows_ - 1);
         return cy * cols_ + cx;
     }
     int cellSize_ = 8, cols_ = 1, rows_ = 1;
+    float worldW_ = 0;
+    bool wrap_ = false;
     std::vector<int> start_, cursor_, cellOf_;
     std::vector<std::pair<Entity, Vec2>> entries_;
 };

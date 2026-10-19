@@ -40,8 +40,9 @@ void PhysicsWorld::step(Simulation& sim) {
         b.vel += w.matter.wind * (dt * 2.0f / std::max(0.2f, b.mass));
         Vec2 prev = b.pos;
         b.pos += b.vel * dt;
+        b.pos = wrapPos(b.pos);   // bay qua kinh tuyến 180° → xuất hiện ở phía bên kia hành tinh
         b.z += b.vz * dt;
-        int tx = static_cast<int>(b.pos.x), ty = static_cast<int>(b.pos.y);
+        int tx = static_cast<int>(b.pos.x), ty = static_cast<int>(std::floor(b.pos.y));
         if (!w.inBounds(tx, ty)) { b.alive = false; continue; }
         Tile& tile = w.at(tx, ty);
 
@@ -52,7 +53,7 @@ void PhysicsWorld::step(Simulation& sim) {
                 sim.grid.query(b.pos, 0.7f + b.radius, [&](Entity e, Vec2) {
                     if (hit != NullEntity || e == b.owner) return;
                     const Body* eb = sim.reg.pool<Body>().tryGet(e);
-                    if (eb && !eb->dead) hit = e;
+                    if (eb && !eb->dead && sim.layerOf(eb->species) == 0) hit = e;   // không trúng sinh vật trong hang
                 });
                 if (hit != NullEntity) {
                     // Động năng ½mv² → sát thương; vật sắc (mũi tên) xuyên tốt hơn vật tù
@@ -143,7 +144,7 @@ void PhysicsWorld::step(Simulation& sim) {
         for (size_t j = i + 1; j < bodies.size(); ++j) {
             PhysBody& c = bodies[j];
             if (!c.alive || c.kind == BodyKind::Projectile) continue;
-            Vec2 d = c.pos - a.pos;
+            Vec2 d = wdiff(c.pos, a.pos);
             float r = a.radius + c.radius;
             if (d.len2() >= r * r || std::fabs(a.z - c.z) > r) continue;
             Vec2 n = d.normalized();
@@ -163,7 +164,7 @@ void PhysicsWorld::blast(Simulation& sim, Vec2 c, float energy) {
     events.push_back({sim.tick, PhysEventKind::Blast, c, kNoMat, energy});
     // Vật thể bị hất văng: xung lực ∝ E / (khoảng cách² + 1)
     for (auto& b : bodies) {
-        Vec2 d = b.pos - c;
+        Vec2 d = wdiff(b.pos, c);
         float r2 = d.len2();
         if (r2 > radius * radius) continue;
         float imp = energy / (r2 + 1.0f) * 0.05f;
@@ -197,7 +198,7 @@ void PhysicsWorld::blast(Simulation& sim, Vec2 c, float energy) {
                 deb.mat = t.stone > 0 ? t.stoneMat : groundMaterial(t.terrain);
                 deb.mass = 3;
                 deb.radius = 0.3f;
-                Vec2 dir = (deb.pos - c).normalized();
+                Vec2 dir = wdiff(deb.pos, c).normalized();
                 float v = std::min(25.0f, std::sqrt(energy) * 0.4f);
                 deb.vel = dir * v * sim.rng.range(0.5f, 1.0f);
                 deb.vz = v * sim.rng.range(0.4f, 1.0f);

@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
     int years = 50;
     int statEvery = 10;
     bool quiet = false;
-    std::string expect;
+    std::string expect, mapOut;
     int expectSpecies = -1;
     int expectDesigns = -1, expectReactions = -1;
     for (int i = 1; i < argc; ++i) {
@@ -136,12 +136,19 @@ int main(int argc, char** argv) {
         else if (a == "--size") cfg.width = cfg.height = std::stoi(next());
         else if (a == "--threads") cfg.threads = static_cast<unsigned>(std::stoi(next()));
         else if (a == "--quiet") quiet = true;
+        else if (a == "--world") {
+            std::string t = next();
+            const char* names[] = {"random", "pangaea", "continents", "archipelago", "ocean", "dry"};
+            for (int k = 0; k < static_cast<int>(WorldType::Count); ++k) if (t == names[k]) cfg.worldType = static_cast<WorldType>(k);
+        }
+        else if (a == "--map") mapOut = next();
         else if (a == "--stat-every") statEvery = std::max(1, std::stoi(next()));
         else if (a == "--expect-stage") expect = next();
         else if (a == "--expect-designs") expectDesigns = std::stoi(next());
         else if (a == "--expect-reactions") expectReactions = std::stoi(next());
         else if (a == "--help") {
             std::printf("worldbox_sim [--scenario sandbox|wolves|humans|twins] [--years N] [--seed S] [--size N] [--threads N] [--quiet]\n"
+                        "             [--world random|pangaea|continents|archipelago|ocean|dry] [--map ban_do.ppm]\n"
                         "             [--stat-every N] [--expect-stage Tribe|Village|Town|City|Nation] [--expect-designs N] [--expect-reactions N]\n");
             return 0;
         }
@@ -154,6 +161,27 @@ int main(int argc, char** argv) {
             std::printf("[Năm %4ld] %s\n", e.tick / kTicksPerYear, e.text.c_str());
     };
     setupScenario(sim, sc);
+    {
+        int land = 0;
+        for (int y = 0; y < sim.world.height(); ++y)
+            for (int x = 0; x < sim.world.width(); ++x) land += !sim.world.isWater(x, y);
+        std::printf("== Hành tinh: %s · %d lõi lục địa · đất liền %.0f%% ==\n", worldTypeName(sim.world.type()), sim.world.continents(),
+                    100.0 * land / (sim.world.width() * sim.world.height()));
+    }
+    if (!mapOut.empty()) {
+        // Xuất bản đồ địa hình dạng ảnh PPM (xem bằng mọi trình xem ảnh) — kiểm tra sinh thế giới
+        if (FILE* f = std::fopen(mapOut.c_str(), "wb")) {
+            std::fprintf(f, "P6 %d %d 255\n", sim.world.width(), sim.world.height());
+            for (int y = 0; y < sim.world.height(); ++y)
+                for (int x = 0; x < sim.world.width(); ++x) {
+                    const TerrainInfo& ti_ = terrainInfo(sim.world.at(x, y).terrain);
+                    unsigned char px[3] = {ti_.r, ti_.g, ti_.b};
+                    std::fwrite(px, 1, 3, f);
+                }
+            std::fclose(f);
+        }
+        if (years == 0) return 0;
+    }
     std::printf("== Kịch bản: %s | seed %u | %d năm ==\n", scenarioName(sc), cfg.seed, years);
     std::fflush(stdout);
 
@@ -172,6 +200,8 @@ int main(int argc, char** argv) {
                 if (spd.population > 0) pops += spd.name + ":" + std::to_string(spd.population) + " ";
             std::printf("     %s| sinh %d | tử vong (già/đói/bị giết/thiên tai/lạnh): %d/%d/%d/%d/%d\n", pops.c_str(), s.births, s.sapientDeaths[0],
                         s.sapientDeaths[1], s.sapientDeaths[2], s.sapientDeaths[3], s.sapientDeaths[4]);
+            if (std::getenv("WB_CARN"))
+                std::printf("     thú ăn thịt chết: %d/%d/%d/%d/%d\n", s.carnivoreDeaths[0], s.carnivoreDeaths[1], s.carnivoreDeaths[2], s.carnivoreDeaths[3], s.carnivoreDeaths[4]);
             if (std::getenv("WB_GOALS")) {
                 // Phân bố mục tiêu hiện tại của các loài có tay khéo (debug cân bằng AI)
                 std::array<int, kGoalCount> hist{};

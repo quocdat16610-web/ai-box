@@ -26,14 +26,16 @@ int main() {
     const char* autostart = std::getenv("WB_AUTOSTART");
     const char* shot = std::getenv("WB_SHOT");
     int frames = std::getenv("WB_FRAMES") ? std::atoi(std::getenv("WB_FRAMES")) : 300;
-    if (autostart) {
+    if (autostart && std::string(autostart) == "menu") { /* chỉ hiện menu */ } else if (autostart) {
         app.scenario = wb::scenarioFromString(autostart);
         if (const char* sz = std::getenv("WB_SIZE")) app.worldSize = std::atoi(sz);
+        if (const char* wt = std::getenv("WB_WORLD")) app.worldType = static_cast<wb::WorldType>(std::atoi(wt) % static_cast<int>(wb::WorldType::Count));
         wb::appStartWorld(app);
         if (const char* sp = std::getenv("WB_SPEED")) app.speedIdx = std::atoi(sp);
         if (const char* z = std::getenv("WB_ZOOM")) app.cam.zoom *= static_cast<float>(std::atof(z));
         if (const char* pre = std::getenv("WB_PRESIM")) for (int i = 0, n = std::atoi(pre); i < n; ++i) app.sim->step();
         if (std::getenv("WB_DEBUG")) app.opt.debugThoughts = true;
+        if (const char* gl = std::getenv("WB_GLOBE")) { app.globe = true; app.globeView.dist = static_cast<float>(std::atof(gl)); }
         if (const char* l = std::getenv("WB_LAYER")) app.opt.layer = static_cast<wb::Layer>(std::atoi(l) % static_cast<int>(wb::Layer::Count));
         if (const char* pn = std::getenv("WB_PANEL")) {
             std::string v = pn;

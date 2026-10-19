@@ -106,7 +106,8 @@ public:
     // Gọi nội bộ bởi Chemistry (công khai để file Chemistry.cpp dùng)
     void emit(const ReactionEvent& e);
     void activate(int i);
-    int idx(int x, int y) const { return y * w_ + x; }
+    // x quấn vòng (hành tinh hình cầu) → nhiệt, chất lỏng, khí chảy qua "đường đổi ngày" liền mạch
+    int idx(int x, int y) const { return y * w_ + (x < 0 ? x + w_ : (x >= w_ ? x - w_ : x)); }
     int width() const { return w_; }
     int height() const { return h_; }
     std::vector<float>& temps() { return temp_; }

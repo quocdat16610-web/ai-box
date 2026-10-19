@@ -25,8 +25,8 @@ namespace {
 // ---------------------------------------------------------------------------
 enum class Res { Running, Done, Failed };
 
-inline int tileX(Vec2 p) { return static_cast<int>(p.x); }
-inline int tileY(Vec2 p) { return static_cast<int>(p.y); }
+inline int tileX(Vec2 p) { return static_cast<int>(std::floor(p.x)); }
+inline int tileY(Vec2 p) { return static_cast<int>(std::floor(p.y)); }
 inline Vec2 tileCenter(int x, int y) { return {x + 0.5f, y + 0.5f}; }
 
 bool isAdult(const Simulation& sim, const Body& b) {
@@ -36,7 +36,7 @@ bool isAdult(const Simulation& sim, const Body& b) {
 // Di chuyển về phía mục tiêu; tự lách vật cản bằng cách thử các hướng lệch.
 // Trả về true khi đã tới nơi (trong bán kính `arrive`).
 bool moveTo(Simulation& sim, Entity e, Transform& tr, Body& body, Mind& m, Vec2 tgt, float arrive) {
-    Vec2 d = tgt - tr.pos;
+    Vec2 d = wdiff(tgt, tr.pos);   // đường ngắn nhất trên hành tinh (có thể vòng qua kinh tuyến 180°)
     float L = d.len();
     if (L <= arrive) { tr.stuck = 0; tr.moving = false; return true; }
     tr.moving = true;
@@ -50,13 +50,14 @@ bool moveTo(Simulation& sim, Entity e, Transform& tr, Body& body, Mind& m, Vec2 
     // Vượt nước: bơi giỏi (gen) qua được nước nông; có bè/thuyền nổi đủ sức chở thì qua mọi vùng nước
     bool swimmer = sim.reg.get<GenomeC>(e).genome[Gene::Swimming] > 0.65f;
     bool raft = heldValue(sim, e, Purpose::Float) >= 60.0f;
+    const Habitat hab = sim.species[body.species].habitat;
     auto passable = [&](int x, int y) {
-        // Né chỗ quá nóng (đám cháy, dung nham, lò) — trừ khi đó chính là đích đến
-        if (sim.world.inBounds(x, y) && sim.world.matter.temp(x, y) > 120 &&
+        // Né chỗ quá nóng (đám cháy, dung nham, lò) — trừ khi đó chính là đích đến (loài trong hang không bị ảnh hưởng)
+        if (hab != Habitat::Cave && sim.world.inBounds(x, y) && sim.world.matter.temp(x, y) > 120 &&
             sim.world.matter.temp(x, y) >= sim.world.matter.temp(tileX(tr.pos), tileY(tr.pos)))
             return false;   // chỉ cho phép đi về phía mát hơn (thoát khỏi đám cháy)
-        if (sim.world.walkable(x, y)) return true;
-        if (!sim.world.isWater(x, y)) return false;
+        if (sim.habitable(body.species, x, y)) return true;
+        if (hab != Habitat::Land || !sim.world.isWater(x, y)) return false;
         return raft || (swimmer && sim.world.at(x, y).terrain == Terrain::ShallowWater);
     };
     for (float a0 : angles) {
@@ -65,7 +66,7 @@ bool moveTo(Simulation& sim, Entity e, Transform& tr, Body& body, Mind& m, Vec2 
         Vec2 nd{dir.x * c - dir.y * s, dir.x * s + dir.y * c};
         Vec2 np = tr.pos + nd * spd;
         if (passable(tileX(np), tileY(np))) {
-            tr.pos = np;
+            tr.pos = wrapPos(np);
             if (a0 == 0.f) tr.stuck = std::max(0, tr.stuck - 1);
             else tr.stuck++;
             return false;
@@ -82,10 +83,10 @@ bool moveTo(Simulation& sim, Entity e, Transform& tr, Body& body, Mind& m, Vec2 
     return false;
 }
 
-Vec2 randomPointNear(Simulation& sim, Mind& m, Vec2 c, float r) {
+Vec2 randomPointNear(Simulation& sim, Mind& m, Vec2 c, float r, int sp) {
     for (int i = 0; i < 8; ++i) {
         Vec2 p{c.x + m.rng.range(-r, r), c.y + m.rng.range(-r, r)};
-        if (sim.world.walkable(tileX(p), tileY(p)) && sim.world.matter.temp(tileX(p), tileY(p)) < 60) return p;
+        if (sim.habitable(sp, tileX(p), tileY(p)) && sim.world.matter.temp(tileX(p), tileY(p)) < 60) return p;
     }
     return c;
 }
@@ -108,11 +109,13 @@ void perceive(Simulation& sim, Entity e, Mind& m, const Transform& tr, const Bod
     float bestPrey = 1e9f, bestThreat = 1e9f, bestMate = 1e9f, bestStranger = 1e9f, bestAlly = 1e9f, bestEnemy = 1e9f;
     bool adult = isAdult(sim, body);
     int myRoot = sim.species.root(body.species);
+    const int myLayer = sim.layerOf(body.species);
 
     sim.grid.query(tr.pos, radius, [&](Entity o, Vec2 opos) {
         if (o == e) return;
         const Body* ob = sim.reg.pool<Body>().tryGet(o);
         if (!ob || ob->dead) return;
+        if (sim.layerOf(ob->species) != myLayer) return;   // dưới lòng đất ↔ trên mặt đất: không nhìn thấy nhau
         const Social* os = sim.reg.pool<Social>().tryGet(o);
         float d2 = dist2(opos, tr.pos);
         int oRoot = sim.species.root(ob->species);
@@ -187,12 +190,12 @@ void perceive(Simulation& sim, Entity e, Mind& m, const Transform& tr, const Bod
     int phase = static_cast<int>((sim.tick / std::max(1, m.thinkInterval)) & 1);
     for (int dy = -r; dy <= r; ++dy)
         for (int dx = -r + ((step == 2) ? ((dy + phase) & 1) : 0); dx <= r; dx += step) {
-            int x = cx + dx, y = cy + dy;
+            int x = sim.world.wrapX(cx + dx), y = cy + dy;
             if (!sim.world.inBounds(x, y)) continue;
             int d = dx * dx + dy * dy;
             if (d > r * r) continue;
             const Tile& t = sim.world.at(x, y);
-            if (wantsPlants && t.food > 25 && !t.fire && d < bf) { bf = d; m.seenFood = {x, y}; }
+            if (wantsPlants && !t.fire && d < bf && sim.foodAt(body.species, x, y) > 25) { bf = d; m.seenFood = {x, y}; }
             if (hands && t.wood > 25 && !t.fire && d < bt) { bt = d; m.seenTree = {x, y}; }
             if (hands && t.stone > 15 && d < bs) { bs = d; m.seenStone = {x, y}; }
             if (t.ore > 15 && d < bo) { bo = d; m.seenOre = {x, y}; }
@@ -282,7 +285,8 @@ WorldState buildState(Simulation& sim, Entity e, Mind& m, const Transform& tr, c
     if (body.fatigue < 0.08f) s |= Rested;
     if (m.stm.threat < 0.3f) s |= Safe;
     const Tile& here = sim.world.at(tileX(tr.pos), tileY(tr.pos));
-    if (here.food > 10) s |= NearFood;
+    if (sim.foodAt(body.species, tileX(tr.pos), tileY(tr.pos)) > 10) s |= NearFood;
+    (void)here;
     if (m.seenFood.valid() || m.ltm.knows(FactType::FoodSource)) s |= KnowsFood;
     if (m.stm.nearestPrey != NullEntity) s |= SeesPrey;
     if (m.seenCorpse.valid()) s |= SeesCarrion;
@@ -318,7 +322,8 @@ WorldState buildState(Simulation& sim, Entity e, Mind& m, const Transform& tr, c
 // sắc, có lò đủ nóng, hiểu sức nổi...) — không phải ô công nghệ.
 bool buildingAllowed(Simulation& sim, const Mind& m, const Group& g, Building b) {
     const BuildingInfo& bi = buildingInfo(b);
-    if (bi.requiredTech >= 0 && !m.known.test(bi.requiredTech)) return false;
+    // Tập quán của nhóm là tri thức chung: thành viên bắt chước cách dựng lều/nhà mà nhóm đã biết
+    if (bi.requiredTech >= 0 && !m.known.test(bi.requiredTech) && !g.knowledge.test(bi.requiredTech)) return false;
     float cut = m.know.bestValue(sim.designs, Purpose::Cut);
     bool bricks = bi.stone > 0 && g.matCount(mat::Brick) >= bi.stone;   // gạch nung: không cần công cụ đẽo đá
     if (cut < bi.minCut && !(bi.minCut >= 4.0f && bricks)) return false;
@@ -407,10 +412,13 @@ void scoreGoals(Simulation& sim, Entity e, Mind& m, const Body& body, const Inve
         int crowd = m.stm.allies;
         if (!sd.dexterous && crowd > 6) r *= 6.0f / crowd; // loài có trí khôn bị giới hạn bởi nhà ở thay vì mật độ
         if (body.hunger > 0.3f) r *= 0.5f;
-        float cap = sim.cfg.maxPopulation * (sd.dexterous ? 0.5f : (sd.diet == Diet::Herbivore ? 0.12f : 0.08f));
+        // Sức chứa: mỗi loài hoang dã có trần riêng (ăn cỏ > ăn tạp > ăn thịt), và tổng thú hoang
+        // không vượt ~65% trần dân số → các loài có trí khôn luôn còn "chỗ" để phát triển.
+        float cap = sim.cfg.maxPopulation * sd.capShare;
         if (pop > cap) r = 0;
         else if (pop > cap * 0.7f) r *= 0.3f;
-        if (sim.stats().population > sim.cfg.maxPopulation * 0.9f) r = 0;
+        if (!sd.dexterous && sim.stats().wildPopulation > sim.cfg.maxPopulation * 0.65f) r = 0;
+        if (sim.stats().population > sim.cfg.maxPopulation * 0.92f) r = 0;
         at(GoalId::Reproduce) = r;
     }
     // --- Xã hội ---
@@ -441,8 +449,13 @@ void scoreGoals(Simulation& sim, Entity e, Mind& m, const Body& body, const Inve
         if (now % 7 == static_cast<long>(entityIndex(e) % 7) || m.buildType == Building::None) m.buildType = pickBuilding(sim, m, *g, sd);
         if (m.buildType != Building::None) {
             int reqT = buildingInfo(m.buildType).requiredTech;
-            if (reqT < 0 || m.known.test(reqT))
+            if (reqT < 0 || m.known.test(reqT) || g->knowledge.test(reqT))
+            {
                 at(GoalId::Build) = 0.22f + p.diligence * 0.25f + (so.role == Role::Builder ? 0.35f : 0.f);
+                // Thiếu chỗ ở → nhu cầu xây nhà cấp bách hơn (cả nhóm "cảm thấy" chật chội)
+                if (sd.dexterous && buildingInfo(m.buildType).housing > 0 && g->housing < pop)
+                    at(GoalId::Build) += 0.3f * std::min(1.0f, (pop - g->housing) / static_cast<float>(std::max(1, pop)));
+            }
         }
         if (knows(Tech::Farming) && sd.dexterous) at(GoalId::Farm) = (so.role == Role::Farmer ? 0.55f : 0.08f) + p.diligence * 0.1f;
         if (knows(Tech::ScentMarking) && now - m.lastMarkTick > 350) at(GoalId::MarkTerritory) = 0.18f + (1 - p.agreeableness) * 0.2f;
@@ -642,6 +655,21 @@ Res gatherResource(Ctx& c, GatherKind kind, MatId prefer = kNoMat) {
     c.inv.add(mt, amount);
     c.m.know.learnMat(mt);
     if (kind == GatherKind::Wood) c.m.know.learnMat(mat::Fiber), c.inv.add(mat::Fiber, 1); // vỏ cây, dây leo
+    // ---- Hầm mỏ: khai thác trên đồi núi → đào xuống lòng đất, đường hầm bò dần theo mạch quặng ngầm ----
+    if (kind != GatherKind::Wood && (t.terrain == Terrain::Hill || t.terrain == Terrain::Mountain) && c.sd.dexterous) {
+        MatId deep = kNoMat;
+        int extra = c.sim.world.digMine(c.m.tx, c.m.ty, c.m.rng, deep);
+        if (extra > 0 && deep != kNoMat) {
+            c.inv.add(deep, extra);
+            if (c.m.know.learnMat(deep)) c.m.think("Đào trúng mạch %s dưới lòng đất!", R[deep].name.c_str());
+            // mỏ còn mạch → quặng tiếp tục được đưa lên cửa hầm (nguồn quặng lâu dài cho cả nhóm)
+            if (kind == GatherKind::Ore && t.ore < 40) { t.ore = static_cast<uint8_t>(std::min(255, t.ore + 25)); t.oreMat = deep; }
+        }
+        if (t.building == Building::None) {
+            c.sim.world.setBuilding(c.m.tx, c.m.ty, Building::Mine);   // cửa hầm mỏ
+            if (c.so.group >= 0) t.owner = static_cast<int16_t>(c.so.group);
+        }
+    }
     c.sim.world.markDirty(c.m.tx, c.m.ty);
     if (power > 0) wearItem(c, use);
     if (power < 1.0f) c.m.know.frustrate(use, 0.05f);
@@ -757,14 +785,14 @@ bool tryShoot(Ctx& c, Entity target) {
     if (slot < 0 || !c.sim.reg.valid(target)) return false;
     const Design& d = c.sim.designs[c.inv.item[slot]];
     Vec2 tp = c.sim.reg.get<Transform>(target).pos;
-    float dist = (tp - c.tr.pos).len();
+    float dist = wdiff(tp, c.tr.pos).len();
     float v = d.props.launchSpeed;
     float angle;
     if (dist < 2.5f || v <= 0 || !ballisticAngle(v, dist, angle)) return false; // quá gần hoặc ngoài tầm
     if (c.sim.tick - c.m.lastShot < 18) return true;
     // Ngắm đón đầu một chút theo hướng mục tiêu đang chạy
     Vec2 lead = tp + (c.sim.reg.get<Transform>(target).target - tp).normalized() * std::min(1.5f, dist * 0.05f);
-    Vec2 dir = (lead - c.tr.pos).normalized();
+    Vec2 dir = wdiff(lead, c.tr.pos).normalized();
     float aim = angle + c.m.rng.gauss((1.0f - c.m.skillOf(Skill::Hunting)) * 0.04f); // tay nghề quyết định độ chính xác
     PhysBody b;
     b.kind = BodyKind::Projectile;
@@ -797,10 +825,10 @@ Res exec(Ctx& c, ActionId a) {
         return c.body.hunger < 0.12f || c.inv.food == 0 ? Res::Done : (m.actionTicks = 0, Res::Running);
     }
     case ActionId::EatHere: {
-        Tile& t = sim.world.at(tileX(c.tr.pos), tileY(c.tr.pos));
-        if (t.food < 5) { m.ltm.contradict(FactType::FoodSource, tileX(c.tr.pos), tileY(c.tr.pos)); return Res::Failed; }
+        const int fx = tileX(c.tr.pos), fy = tileY(c.tr.pos);
+        if (sim.foodAt(c.body.species, fx, fy) < 5) { m.ltm.contradict(FactType::FoodSource, fx, fy); return Res::Failed; }
         if (++m.actionTicks % 5) return Res::Running;
-        t.food = static_cast<uint8_t>(std::max(0, t.food - 12));
+        sim.eatFoodAt(c.body.species, fx, fy, 12);
         c.body.hunger = std::max(0.0f, c.body.hunger - 0.1f);
         if (m.actionTicks % 25 == 0) Brain::stimulate(sim, c.e, Stimulus::EatPlants);
         return c.body.hunger < 0.12f ? Res::Done : Res::Running;
@@ -808,7 +836,7 @@ Res exec(Ctx& c, ActionId a) {
     case ActionId::GoToFood: {
         if (m.actionTicks++ == 0 && !pickTarget(c, m.seenFood, FactType::FoodSource)) return Res::Failed;
         if (!moveTo(sim, c.e, c.tr, c.body, m, tileCenter(m.tx, m.ty), 0.5f)) return c.tr.stuck > 60 || m.actionTicks > 400 ? Res::Failed : Res::Running;
-        if (sim.world.at(m.tx, m.ty).food < 10) { m.ltm.contradict(FactType::FoodSource, m.tx, m.ty); return Res::Failed; }
+        if (sim.foodAt(c.body.species, m.tx, m.ty) < 10) { m.ltm.contradict(FactType::FoodSource, m.tx, m.ty); return Res::Failed; }
         return Res::Done;
     }
     case ActionId::SearchFood:
@@ -826,14 +854,13 @@ Res exec(Ctx& c, ActionId a) {
             // Con non đi theo mẹ; thành viên nhóm không đi quá xa lãnh thổ
             if (c.so.role == Role::Child && sim.reg.valid(c.so.mother)) base = sim.reg.get<Transform>(c.so.mother).pos, r = 2;
             else if (c.g && a == ActionId::Explore && dist(c.tr.pos, homePos(*c.g)) > c.g->territoryRadius + 10) base = homePos(*c.g);
-            Vec2 p = randomPointNear(sim, m, base, r);
+            Vec2 p = randomPointNear(sim, m, base, r, c.body.species);
             m.tx = tileX(p); m.ty = tileY(p);
         }
         m.actionTicks++;
         // Kiểm tra nhanh mục tiêu tìm kiếm mỗi vài tick
         if (a == ActionId::SearchFood && m.actionTicks % 8 == 0) {
-            const Tile& t = sim.world.at(tileX(c.tr.pos), tileY(c.tr.pos));
-            if (t.food > 25) { m.seenFood = {tileX(c.tr.pos), tileY(c.tr.pos)}; m.ltm.remember(FactType::FoodSource, m.seenFood.x, m.seenFood.y, sim.tick); return Res::Done; }
+            if (sim.foodAt(c.body.species, tileX(c.tr.pos), tileY(c.tr.pos)) > 25) { m.seenFood = {tileX(c.tr.pos), tileY(c.tr.pos)}; m.ltm.remember(FactType::FoodSource, m.seenFood.x, m.seenFood.y, sim.tick); return Res::Done; }
         }
         if (a == ActionId::SearchPrey && m.actionTicks % 6 == 0) {
             bool found = false;
@@ -872,12 +899,12 @@ Res exec(Ctx& c, ActionId a) {
         return Res::Running;
     }
     case ActionId::Forage: {
-        Tile& t = sim.world.at(tileX(c.tr.pos), tileY(c.tr.pos));
-        if (t.food < 5) return Res::Failed;
+        const int fx = tileX(c.tr.pos), fy = tileY(c.tr.pos);
+        if (sim.foodAt(c.body.species, fx, fy) < 5) return Res::Failed;
         if (++m.actionTicks < 10 - static_cast<int>(std::min(6.0f, heldValue(sim, c.e, Purpose::Cut)))) return Res::Running;
         int units = std::min(carryCap(c.sd) - c.inv.food, 1 + static_cast<int>(m.skillOf(Skill::Foraging) * 3));
         if (units <= 0) return Res::Done;
-        t.food = static_cast<uint8_t>(std::max(0, t.food - units * 15));
+        sim.eatFoodAt(c.body.species, fx, fy, units * 15);
         c.inv.food += units;
         Brain::stimulate(sim, c.e, Stimulus::EatPlants);
         return Res::Done;
@@ -892,7 +919,14 @@ Res exec(Ctx& c, ActionId a) {
             if (sim.reg.get<Body>(m.target).dead) { m.seenCorpse = {tileX(pt.pos), tileY(pt.pos)}; return Res::Failed; } // → đi nhặt xác
             return Res::Running;
         }
-        if (!moveTo(sim, c.e, c.tr, c.body, m, pt.pos, 0.9f)) return c.tr.stuck > 50 ? Res::Failed : Res::Running;
+        {
+            // Nước rút: thú săn tăng tốc ở cự ly gần (tốn sức) — như sói, báo ngoài đời
+            const float saved = c.body.speed;
+            if (dist2(pt.pos, c.tr.pos) < 16 && c.body.fatigue < 0.85f) { c.body.speed *= 1.3f; c.body.fatigue += 0.0015f; }
+            const bool reached = moveTo(sim, c.e, c.tr, c.body, m, pt.pos, 0.9f);
+            c.body.speed = saved;
+            if (!reached) return c.tr.stuck > 50 ? Res::Failed : Res::Running;
+        }
         if (m.actionTicks % 6) return Res::Running;
         // Săn theo bầy: mỗi đồng loại cùng nhóm ở gần cộng thêm 35% hiệu quả
         int helpers = 0;
@@ -956,7 +990,7 @@ Res exec(Ctx& c, ActionId a) {
     }
     case ActionId::GoHome: {
         if (!c.g) return Res::Failed;
-        if (m.actionTicks++ == 0) { Vec2 p = randomPointNear(sim, m, homePos(*c.g), 1.5f); m.tx = tileX(p); m.ty = tileY(p); }
+        if (m.actionTicks++ == 0) { Vec2 p = randomPointNear(sim, m, homePos(*c.g), 1.5f, c.body.species); m.tx = tileX(p); m.ty = tileY(p); }
         if (moveTo(sim, c.e, c.tr, c.body, m, tileCenter(m.tx, m.ty), 0.8f)) return Res::Done;
         return c.tr.stuck > 80 || m.actionTicks > 600 ? Res::Failed : Res::Running;
     }
@@ -973,7 +1007,7 @@ Res exec(Ctx& c, ActionId a) {
         return Res::Running;
     }
     case ActionId::Flee: {
-        Vec2 away = (c.tr.pos - m.stm.threatPos).normalized();
+        Vec2 away = wdiff(c.tr.pos, m.stm.threatPos).normalized();
         if (away.len2() < 0.1f) away = {m.rng.range(-1, 1), m.rng.range(-1, 1)};
         // Chạy về nhà nếu có nhóm (an toàn trong đám đông)
         Vec2 tgt = c.tr.pos + away * 6.0f;
@@ -985,7 +1019,7 @@ Res exec(Ctx& c, ActionId a) {
                 float ang = k * 0.785398f;
                 Vec2 cand = c.tr.pos + Vec2{std::cos(ang), std::sin(ang)} * 7.0f;
                 int cx = tileX(cand), cy = tileY(cand);
-                if (!sim.world.inBounds(cx, cy) || !sim.world.walkable(cx, cy)) continue;
+                if (!sim.habitable(c.body.species, cx, cy)) continue;
                 float score = sim.world.matter.temp(cx, cy) - dist(cand, m.stm.threatPos) * 3.0f + (sim.world.at(cx, cy).wood > 30 ? 40.0f : 0.0f);
                 if (score < bestScore) { bestScore = score; tgt = cand; }
             }
@@ -1054,7 +1088,7 @@ Res exec(Ctx& c, ActionId a) {
         } else if (c.g) {
             if (goHome(c, 2.0f)) return Res::Failed; // về nhà vẫn không thấy ai → thôi
         } else {
-            if (m.actionTicks == 1) { Vec2 p = randomPointNear(sim, m, c.tr.pos, 10); m.tx = tileX(p); m.ty = tileY(p); }
+            if (m.actionTicks == 1) { Vec2 p = randomPointNear(sim, m, c.tr.pos, 10, c.body.species); m.tx = tileX(p); m.ty = tileY(p); }
             if (moveTo(sim, c.e, c.tr, c.body, m, tileCenter(m.tx, m.ty), 0.8f)) return Res::Failed;
         }
         return m.actionTicks > 300 || c.tr.stuck > 60 ? Res::Failed : Res::Running;

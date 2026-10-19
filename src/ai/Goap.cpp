@@ -82,6 +82,19 @@ bool planActions(WorldState start, WorldState goal, const PlannerAgentView& view
     thread_local std::vector<Node> nodes;
     nodes.clear();
     auto h = [&](WorldState s) { return static_cast<float>(std::bitset<64>(goal & ~s).count()); };
+    // Cắt tỉa theo "liên quan" (hồi quy từ mục tiêu): chỉ những hành động có hiệu ứng góp vào
+    // mục tiêu, hoặc vào điều kiện của một hành động liên quan, mới được mở rộng. Không có bước
+    // này, các hành động rẻ nhưng vô ích (ăn, bỏ chạy...) làm tràn ngân sách nút trước khi A*
+    // kịp tìm ra chuỗi dài hơn như "gom vật liệu → xây".
+    WorldState relevant = goal;
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (int a = 0; a < kActionCount; ++a) {
+            if (!view.available[a] || !(kActions[a].effect & relevant)) continue;
+            WorldState nr = relevant | kActions[a].pre;
+            if (nr != relevant) { relevant = nr; grew = true; }
+        }
+    }
     nodes.push_back({start, 0, h(start), -1, ActionId::Count, 0, false});
     const int kMaxNodes = 300;
     while (true) {
@@ -106,6 +119,7 @@ bool planActions(WorldState start, WorldState goal, const PlannerAgentView& view
             if (!view.available[a]) continue;
             const ActionDef& d = kActions[a];
             if ((cur.s & d.pre) != d.pre) continue;
+            if (!(d.effect & relevant & ~cur.s)) continue;   // không góp gì cho mục tiêu
             WorldState ns = cur.s | d.effect;
             if (ns == cur.s) continue; // hành động vô ích
             float g = cur.g + d.cost * view.costMul[a];

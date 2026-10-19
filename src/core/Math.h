@@ -32,8 +32,35 @@ struct Vec2 {
     Vec2 normalized() const { float l = len(); return l > 1e-6f ? Vec2{x / l, y / l} : Vec2{0, 0}; }
 };
 
-inline float dist2(Vec2 a, Vec2 b) { return (a - b).len2(); }
-inline float dist(Vec2 a, Vec2 b) { return (a - b).len(); }
+// ---- Hành tinh hình cầu: bản đồ quấn vòng theo kinh độ (đông ↔ tây) ----
+// Đi mãi về phía đông sẽ quay lại phía tây như trên Trái Đất. Hai cực (mép trên/dưới)
+// không quấn. Chiều rộng quấn được World::generate đặt một lần; 0 = bản đồ phẳng.
+struct WrapSpace {
+    static inline float width = 0;
+    static inline float height = 0;   // y bị kẹp trong [0, height) — không ai đi "qua" được cực
+    // Hiệu toạ độ x ngắn nhất trên vòng tròn kinh độ
+    static float dx(float d) {
+        if (width <= 0) return d;
+        if (d > width * 0.5f) return d - width;
+        if (d < -width * 0.5f) return d + width;
+        return d;
+    }
+    static float wrapX(float x) {
+        if (width <= 0) return x;
+        if (x < 0) x += width * (1.0f + std::floor(-x / width));
+        if (x >= width) x = std::fmod(x, width);
+        return x;
+    }
+};
+// a - b theo đường ngắn nhất trên hành tinh
+inline Vec2 wdiff(Vec2 a, Vec2 b) { return {WrapSpace::dx(a.x - b.x), a.y - b.y}; }
+inline Vec2 wrapPos(Vec2 p) {
+    float y = p.y;
+    if (WrapSpace::height > 0) y = std::clamp(y, 0.0f, WrapSpace::height - 0.001f);
+    return {WrapSpace::wrapX(p.x), y};
+}
+inline float dist2(Vec2 a, Vec2 b) { return wdiff(a, b).len2(); }
+inline float dist(Vec2 a, Vec2 b) { return wdiff(a, b).len(); }
 inline float clamp01(float v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
 inline float lerp(float a, float b, float t) { return a + (b - a) * t; }
 

@@ -5,6 +5,7 @@
 #include "Text.h"
 #include "../sim/Simulation.h"
 #include <cmath>
+#include <algorithm>
 
 namespace wb {
 
@@ -70,6 +71,7 @@ void Renderer::init(Simulation& sim) {
 }
 
 void Renderer::shutdown() {
+    if (globeReady_) { UnloadModel(globe_); globeReady_ = false; }   // không gỡ texture (dùng chung)
     if (!ready_) return;
     UnloadTexture(tex_);
     UnloadImage(image_);
@@ -201,24 +203,158 @@ void Renderer::sync(Simulation& sim) {
         int x = i % w_, y = i / w_;
         paintTile(sim, x, y);
         // Ô lân cận cần vẽ lại viền lãnh thổ
-        if (x > 0) paintTile(sim, x - 1, y);
+        paintTile(sim, (x + w_ - 1) % w_, y);   // quấn vòng kinh độ
         if (y > 0) paintTile(sim, x, y - 1);
-        if (x + 1 < w_) paintTile(sim, x + 1, y);
+        paintTile(sim, (x + 1) % w_, y);
         if (y + 1 < h_) paintTile(sim, x, y + 1);
     }
     sim.world.clearDirty();
     UpdateTexture(tex_, image_.data);
 }
 
+float nearestCopyX(float px, float camX, float worldW) {
+    float d = px - camX;
+    if (d > worldW * 0.5f) return px - worldW;
+    if (d < -worldW * 0.5f) return px + worldW;
+    return px;
+}
+
+Vector3 globePoint(float tileX, float tileY, int w, int h) {
+    float lon = tileX / w * 6.2831853f;
+    float lat = 1.5707963f - tileY / h * 3.14159265f;   // hàng 0 = cực bắc
+    // z = −sin(kinh độ): nhìn từ ngoài vào, phía đông nằm bên PHẢI (không bị lật gương)
+    return {std::cos(lat) * std::cos(lon), std::sin(lat), -std::cos(lat) * std::sin(lon)};
+}
+
+// ---------------------------------------------------------------------------
+// Quả địa cầu 3D
+// ---------------------------------------------------------------------------
+namespace {
+constexpr int kGlobeRings = 64, kGlobeSegs = 128;
+}
+
+void Renderer::buildGlobeMesh() {
+    // Lưới cầu UV tự dựng: toạ độ texture (u, v) = (x/W, y/H) đúng phép chiếu trụ đẳng chữ nhật
+    // mà bản đồ 2D đang dùng → dán thẳng texture địa hình lên, không cần ảnh riêng.
+    Mesh mesh{};
+    int vc = (kGlobeRings + 1) * (kGlobeSegs + 1);
+    mesh.vertexCount = vc;
+    mesh.triangleCount = kGlobeRings * kGlobeSegs * 2;
+    mesh.vertices = static_cast<float*>(MemAlloc(vc * 3 * sizeof(float)));
+    mesh.texcoords = static_cast<float*>(MemAlloc(vc * 2 * sizeof(float)));
+    mesh.normals = static_cast<float*>(MemAlloc(vc * 3 * sizeof(float)));
+    mesh.colors = static_cast<unsigned char*>(MemAlloc(vc * 4));
+    mesh.indices = static_cast<unsigned short*>(MemAlloc(mesh.triangleCount * 3 * sizeof(unsigned short)));
+    int k = 0;
+    for (int i = 0; i <= kGlobeRings; ++i)
+        for (int j = 0; j <= kGlobeSegs; ++j, ++k) {
+            float u = j / static_cast<float>(kGlobeSegs), v = i / static_cast<float>(kGlobeRings);
+            Vector3 p = globePoint(u * w_, v * h_, w_, h_);
+            mesh.vertices[k * 3] = p.x; mesh.vertices[k * 3 + 1] = p.y; mesh.vertices[k * 3 + 2] = p.z;
+            mesh.normals[k * 3] = p.x; mesh.normals[k * 3 + 1] = p.y; mesh.normals[k * 3 + 2] = p.z;
+            mesh.texcoords[k * 2] = u; mesh.texcoords[k * 2 + 1] = v;
+            for (int c = 0; c < 4; ++c) mesh.colors[k * 4 + c] = 255;
+        }
+    int t = 0;
+    for (int i = 0; i < kGlobeRings; ++i)
+        for (int j = 0; j < kGlobeSegs; ++j) {
+            unsigned short a = static_cast<unsigned short>(i * (kGlobeSegs + 1) + j), b = a + 1;
+            unsigned short c = static_cast<unsigned short>(a + kGlobeSegs + 1), d = c + 1;
+            // ngược chiều kim đồng hồ khi nhìn từ ngoài (mặt trước, không bị cull)
+            mesh.indices[t++] = a; mesh.indices[t++] = c; mesh.indices[t++] = b;
+            mesh.indices[t++] = b; mesh.indices[t++] = c; mesh.indices[t++] = d;
+        }
+    UploadMesh(&mesh, true);   // dynamic: màu đỉnh (ánh sáng ngày/đêm) cập nhật mỗi khung
+    globe_ = LoadModelFromMesh(mesh);
+    globe_.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = tex_;
+    globeReady_ = true;
+}
+
+Camera3D globeCamera(const GlobeView& gv) {
+    Vector3 dir = {std::cos(gv.lat) * std::cos(gv.lon), std::sin(gv.lat), -std::cos(gv.lat) * std::sin(gv.lon)};
+    Camera3D cam{};
+    cam.position = {dir.x * gv.dist, dir.y * gv.dist, dir.z * gv.dist};
+    cam.target = {0, 0, 0};
+    cam.up = {0, 1, 0};
+    cam.fovy = 40;
+    cam.projection = CAMERA_PERSPECTIVE;
+    return cam;
+}
+
+void Renderer::drawGlobe(Simulation& sim, const GlobeView& gv, const RenderOptions& opt, float time, float uiScale) {
+    if (!ready_) return;
+    if (!globeReady_) buildGlobeMesh();
+    globe_.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = tex_;
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    ClearBackground(Color{4, 6, 14, 255});
+    // Trời sao
+    for (int i = 0; i < 260; ++i) {
+        uint32_t h = hash32(i * 2654435761u);
+        unsigned char a = static_cast<unsigned char>(90 + (h >> 24) % 140);
+        float tw = 0.6f + 0.4f * std::sin(time * (1 + (h % 5)) + i);
+        DrawPixel(static_cast<int>(h % W), static_cast<int>((h >> 11) % H), Color{220, 230, 255, static_cast<unsigned char>(a * tw)});
+    }
+    Vector3 dir = {std::cos(gv.lat) * std::cos(gv.lon), std::sin(gv.lat), -std::cos(gv.lat) * std::sin(gv.lon)};
+    Camera3D cam = globeCamera(gv);
+    // Quầng khí quyển phía sau quả cầu (bán kính trên màn hình tính từ góc nhìn)
+    float ang = std::asin(std::min(0.999f, 1.0f / gv.dist));
+    float rScreen = std::tan(ang) / std::tan(cam.fovy * 0.5f * DEG2RAD) * H * 0.5f;
+    Vector2 c{W * 0.5f, H * 0.5f};
+    DrawCircleGradient(static_cast<int>(c.x), static_cast<int>(c.y), rScreen * 1.12f, Color{90, 150, 255, 110}, Color{90, 150, 255, 0});
+    // Ánh sáng: mặt trời chiếu từ phía trên-trái-trước so với người xem, + mùa làm nghiêng trục
+    Vector3 right = {-dir.z, 0, dir.x};
+    float rl = std::sqrt(right.x * right.x + right.z * right.z);
+    if (rl > 1e-4f) { right.x /= rl; right.z /= rl; }
+    float season = sim.world.weather().seasonTemp;
+    Vector3 sun = {dir.x * 0.7f - right.x * 0.6f, dir.y * 0.7f + 0.35f + season * 0.25f, dir.z * 0.7f - right.z * 0.6f};
+    float sl = std::sqrt(sun.x * sun.x + sun.y * sun.y + sun.z * sun.z);
+    sun = {sun.x / sl, sun.y / sl, sun.z / sl};
+    Mesh& mesh = globe_.meshes[0];
+    for (int k = 0; k < mesh.vertexCount; ++k) {
+        float d = mesh.normals[k * 3] * sun.x + mesh.normals[k * 3 + 1] * sun.y + mesh.normals[k * 3 + 2] * sun.z;
+        float l = std::clamp(0.28f + std::max(0.0f, d) * 0.95f, 0.0f, 1.15f);   // mặt tối vẫn hơi sáng (ánh trăng)
+        unsigned char v = static_cast<unsigned char>(std::min(255.0f, l * 230));
+        mesh.colors[k * 4] = v; mesh.colors[k * 4 + 1] = v;
+        mesh.colors[k * 4 + 2] = static_cast<unsigned char>(std::min(255.0f, v * 1.0f + (d < 0 ? 25 : 0)));
+    }
+    UpdateMeshBuffer(mesh, 3, mesh.colors, mesh.vertexCount * 4, 0);
+    BeginMode3D(cam);
+    DrawModel(globe_, {0, 0, 0}, 1.0f, WHITE);
+    EndMode3D();
+    // Nhãn các nền văn minh lớn nằm ở bán cầu đang nhìn thấy
+    float fs = 13 * uiScale;
+    for (const Group& g : sim.groups) {
+        if (!g.alive || g.stage < (gv.dist > 2.2f ? Stage::Village : Stage::Tribe) || g.population() < 3) continue;
+        Vector3 p = globePoint(g.homeX + 0.5f, g.homeY + 0.5f, w_, h_);
+        float facing = p.x * dir.x + p.y * dir.y + p.z * dir.z;
+        if (facing < 0.25f) continue;
+        Vector2 sp = GetWorldToScreen({p.x * 1.01f, p.y * 1.01f, p.z * 1.01f}, cam);
+        Color gc = groupColor(sim, g.id);
+        DrawCircleV(sp, 3 * uiScale, gc);
+        std::string label = g.displayName();
+        float tw = ui::measureText(label, fs);
+        unsigned char a = static_cast<unsigned char>(std::clamp((facing - 0.25f) * 600.0f, 0.0f, 230.0f));
+        DrawRectangleRounded({sp.x + 5 * uiScale, sp.y - fs * 0.6f, tw + 8, fs + 4}, 0.3f, 4, Color{0, 0, 0, static_cast<unsigned char>(a * 0.7f)});
+        ui::drawText(label, sp.x + 9 * uiScale, sp.y - fs * 0.5f, fs, Color{g.stage == Stage::Nation ? (unsigned char)255 : (unsigned char)235, 225, 160, a});
+    }
+    (void)opt;
+}
+
 void Renderer::drawWorld(Simulation& sim, const Camera2D& cam, const RenderOptions& opt, float time) {
     const float S = kTileWorld;
-    DrawTexturePro(tex_, {0, 0, static_cast<float>(tex_.width), static_cast<float>(tex_.height)},
-                   {0, 0, w_ * S, h_ * S}, {0, 0}, 0, WHITE);
+    const float WS = w_ * S;
     // Khung nhìn (để culling)
     Vector2 tl = GetScreenToWorld2D({0, 0}, cam);
     Vector2 br = GetScreenToWorld2D({static_cast<float>(GetScreenWidth()), static_cast<float>(GetScreenHeight())}, cam);
-    int x0 = std::max(0, static_cast<int>(tl.x / S) - 1), y0 = std::max(0, static_cast<int>(tl.y / S) - 1);
-    int x1 = std::min(w_ - 1, static_cast<int>(br.x / S) + 1), y1 = std::min(h_ - 1, static_cast<int>(br.y / S) + 1);
+    // Hành tinh quấn vòng: vẽ các bản sao texture chạm khung nhìn (trái/giữa/phải)
+    for (int k = static_cast<int>(std::floor(tl.x / WS)); k <= static_cast<int>(std::floor(br.x / WS)); ++k)
+        DrawTexturePro(tex_, {0, 0, static_cast<float>(tex_.width), static_cast<float>(tex_.height)},
+                       {k * WS, 0, WS, h_ * S}, {0, 0}, 0, WHITE);
+    // Ô trong khung nhìn: x KHÔNG bị kẹp (world.at / matter.cell tự quấn), chỉ y bị kẹp ở hai cực
+    int x0 = static_cast<int>(std::floor(tl.x / S)) - 1, y0 = std::max(0, static_cast<int>(tl.y / S) - 1);
+    int x1 = static_cast<int>(std::floor(br.x / S)) + 1, y1 = std::min(h_ - 1, static_cast<int>(br.y / S) + 1);
+    if (x1 - x0 > w_ + 2) { x0 = static_cast<int>(cam.target.x / S) - w_ / 2; x1 = x0 + w_; }
+    auto nx = [&](float px) { return nearestCopyX(px, cam.target.x, WS); };
 
     // Lửa nhấp nháy
     if (sim.world.burningCount() > 0)
@@ -232,15 +368,16 @@ void Renderer::drawWorld(Simulation& sim, const Camera2D& cam, const RenderOptio
     // Mưa
     const Weather& w = sim.world.weather();
     if (w.rainTicks > 0) {
-        DrawCircleV({w.rainX * S, w.rainY * S}, w.rainRadius * S, Color{40, 60, 110, 50});
+        float rx = nx(w.rainX * S);
+        DrawCircleV({rx, w.rainY * S}, w.rainRadius * S, Color{40, 60, 110, 50});
         for (int i = 0; i < 120; ++i) {
             float a = hash32(i * 31) % 6283 / 1000.0f, r = (hash32(i * 17) % 1000) / 1000.0f * w.rainRadius * S;
             float yy = std::fmod(time * 90 + i * 13, 16.0f);
-            DrawLineV({w.rainX * S + std::cos(a) * r, w.rainY * S + std::sin(a) * r + yy},
-                      {w.rainX * S + std::cos(a) * r - 1, w.rainY * S + std::sin(a) * r + yy + 3}, Color{180, 200, 255, 160});
+            DrawLineV({rx + std::cos(a) * r, w.rainY * S + std::sin(a) * r + yy},
+                      {rx + std::cos(a) * r - 1, w.rainY * S + std::sin(a) * r + yy + 3}, Color{180, 200, 255, 160});
         }
     }
-    if (w.droughtTicks > 0) DrawRectangle(0, 0, static_cast<int>(w_ * S), static_cast<int>(h_ * S), Color{255, 180, 60, 25});
+    if (w.droughtTicks > 0) DrawRectangleV(tl, {br.x - tl.x, br.y - tl.y}, Color{255, 180, 60, 25});
 
     // ---- Lớp vật chất: chất lỏng, vật chất rời, khí (chỉ trong khung nhìn) ----
     const MatterGrid& G = sim.world.matter;
@@ -294,7 +431,7 @@ void Renderer::drawWorld(Simulation& sim, const Camera2D& cam, const RenderOptio
         }
     // ---- Vật thể vật lý: bóng đổ trên mặt đất + vật ở độ cao z ----
     for (const PhysBody& b : sim.physics.bodies) {
-        float px = b.pos.x * S, py = b.pos.y * S;
+        float px = nx(b.pos.x * S), py = b.pos.y * S;
         if (px < tl.x - 8 || py < tl.y - 8 || px > br.x + 8 || py > br.y + 8) continue;
         float r = std::max(1.0f, b.radius * S);
         DrawEllipse(static_cast<int>(px), static_cast<int>(py), r, r * 0.5f, Color{0, 0, 0, 90}); // bóng
@@ -313,7 +450,7 @@ void Renderer::drawWorld(Simulation& sim, const Camera2D& cam, const RenderOptio
     // Sinh vật
     for (Entity e : sim.agents) {
         const Transform& tr = sim.reg.get<Transform>(e);
-        float px = tr.pos.x * S, py = tr.pos.y * S;
+        float px = nx(tr.pos.x * S), py = tr.pos.y * S;
         if (px < tl.x - 8 || py < tl.y - 8 || px > br.x + 8 || py > br.y + 8) continue;
         const Body& b = sim.reg.get<Body>(e);
         const Social& so = sim.reg.get<Social>(e);
@@ -342,11 +479,13 @@ void Renderer::drawWorld(Simulation& sim, const Camera2D& cam, const RenderOptio
     // Cá thể được chọn: viền + đường đi tới mục tiêu
     if (sim.reg.valid(opt.selected)) {
         const Transform& tr = sim.reg.get<Transform>(opt.selected);
-        DrawCircleLinesV({tr.pos.x * S, tr.pos.y * S}, 6, WHITE);
-        if (tr.moving) DrawLineV({tr.pos.x * S, tr.pos.y * S}, {tr.target.x * S, tr.target.y * S}, Color{255, 255, 255, 120});
+        Vector2 sp{nx(tr.pos.x * S), tr.pos.y * S};
+        DrawCircleLinesV(sp, 6, WHITE);
+        Vec2 td = wdiff(tr.target, tr.pos);
+        if (tr.moving) DrawLineV(sp, {sp.x + td.x * S, sp.y + td.y * S}, Color{255, 255, 255, 120});
         const Mind& m = sim.reg.get<Mind>(opt.selected);
         float r = (5.0f + m.intellect * 6.0f + m.pers.openness * 3.0f) * S;
-        DrawCircleLinesV({tr.pos.x * S, tr.pos.y * S}, r, Color{255, 255, 255, 50}); // tầm nhìn
+        DrawCircleLinesV(sp, r, Color{255, 255, 255, 50}); // tầm nhìn
     }
 }
 
@@ -358,7 +497,7 @@ void Renderer::drawOverlay(Simulation& sim, const Camera2D& cam, const RenderOpt
         for (const Group& g : sim.groups) {
             if (!g.alive || g.population() < 3) continue;
             if (g.stage == Stage::Pack && cam.zoom < 1.2f) continue;
-            Vector2 sp = GetWorldToScreen2D({(g.homeX + 0.5f) * S, (g.homeY - 1.5f) * S}, cam);
+            Vector2 sp = GetWorldToScreen2D({nearestCopyX((g.homeX + 0.5f) * S, cam.target.x, w_ * S), (g.homeY - 1.5f) * S}, cam);
             if (sp.x < -200 || sp.y < -50 || sp.x > GetScreenWidth() + 200 || sp.y > GetScreenHeight() + 50) continue;
             std::string label = g.displayName() + " · " + stageName(g.stage, g.animal) + " (" + std::to_string(g.population()) + ")";
             float tw = ui::measureText(label, fs);
@@ -381,7 +520,7 @@ void Renderer::drawOverlay(Simulation& sim, const Camera2D& cam, const RenderOpt
             long age = sim.tick - it->tick;
             if (age > 200) break;
             if (it->kind == ReactionKind::Decay) continue;   // phân huỷ xác: quá nhiều, bỏ qua nhãn
-            Vector2 sp = GetWorldToScreen2D({(it->x + 0.5f) * S, (it->y + 0.5f) * S}, cam);
+            Vector2 sp = GetWorldToScreen2D({nearestCopyX((it->x + 0.5f) * S, cam.target.x, w_ * S), (it->y + 0.5f) * S}, cam);
             if (sp.x < 0 || sp.y < 0 || sp.x > GetScreenWidth() || sp.y > GetScreenHeight()) continue;
             std::string t = std::string(reactionName(it->kind)) + ": " + it->describe(sim.world.materials);
             float f = fs * 0.75f;
@@ -397,7 +536,7 @@ void Renderer::drawOverlay(Simulation& sim, const Camera2D& cam, const RenderOpt
     auto bubble = [&](Entity e, bool full) {
         const Transform& tr = sim.reg.get<Transform>(e);
         const Mind& m = sim.reg.get<Mind>(e);
-        Vector2 sp = GetWorldToScreen2D({tr.pos.x * S, tr.pos.y * S - 6}, cam);
+        Vector2 sp = GetWorldToScreen2D({nearestCopyX(tr.pos.x * S, cam.target.x, w_ * S), tr.pos.y * S - 6}, cam);
         if (sp.x < -100 || sp.y < -30 || sp.x > GetScreenWidth() + 100 || sp.y > GetScreenHeight() + 30) return;
         std::string t = m.thought;
         float f = full ? fs : fs * 0.8f;
@@ -413,7 +552,7 @@ void Renderer::drawOverlay(Simulation& sim, const Camera2D& cam, const RenderOpt
         for (Entity e : sim.agents) {
             if (shown > 60) break;
             const Transform& tr = sim.reg.get<Transform>(e);
-            Vector2 sp = GetWorldToScreen2D({tr.pos.x * S, tr.pos.y * S}, cam);
+            Vector2 sp = GetWorldToScreen2D({nearestCopyX(tr.pos.x * S, cam.target.x, w_ * S), tr.pos.y * S}, cam);
             if (sp.x < 0 || sp.y < 0 || sp.x > GetScreenWidth() || sp.y > GetScreenHeight()) continue;
             if (sim.reg.get<Mind>(e).intellect < 0.12f && cam.zoom < 3) continue; // bỏ qua sinh vật bản năng khi nhìn xa
             bubble(e, false);

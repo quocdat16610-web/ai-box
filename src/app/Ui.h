@@ -29,7 +29,13 @@ struct App {
     RenderOptions opt;
     bool inMenu = true;
     Scenario scenario = Scenario::Sandbox;
-    int worldSize = 192;
+    int worldSize = 128;        // số hàng vĩ độ; số cột kinh độ = 2 × (bản đồ trụ của hành tinh)
+    WorldType worldType = WorldType::Random;   // kiểu hành tinh chọn ở menu
+
+    // Quả địa cầu: thu nhỏ bản đồ hết cỡ → chuyển sang xem hành tinh hình cầu 3D
+    bool globe = false;
+    GlobeView globeView;
+    int lastW = 0, lastH = 0;   // kích thước màn hình khung trước (phát hiện xoay điện thoại)
 
     ToolCategory category = ToolCategory::Inspect;
     Power tool = Power::Inspect;

@@ -54,6 +54,7 @@ enum class Building : uint8_t {
     None, Den, Nest, Hut, House, StoneHouse, Wall, Tower, Bridge,
     Granary, Workshop, Forge, Temple, TownHall, Castle, ScentMark, Totem,
     Hearth,   // bếp lửa: nguồn nhiệt ~700°C (nấu ăn, sưởi, nung thử nghiệm)
+    Mine,     // cửa hầm mỏ: sinh vật đào xuống lòng đất theo mạch quặng
     Count
 };
 
@@ -71,6 +72,17 @@ const BuildingInfo& buildingInfo(Building b); // định nghĩa trong World.cpp 
 
 // Vật phẩm nằm trên mặt đất: xác chết, công cụ bị bỏ lại, đá rơi...
 // Đây là "tài liệu học tập" cho các sinh vật tò mò quan sát.
+// ---- Lòng đất (một tầng dưới mặt đất) ----
+// Đá liền khối, hang động tự nhiên (mạng đường hầm do nước ngầm khoét), hồ ngầm, túi
+// magma, và đường hầm mỏ do sinh vật đào. Mỗi ô có thể chứa một mạch quặng và nấm hang.
+enum class Under : uint8_t { Rock, Cave, Tunnel, Water, Magma };
+struct UnderTile {
+    Under kind = Under::Rock;
+    uint8_t oreMat = 0xFF;   // MatId mạch quặng ngầm (0xFF = không có)
+    uint8_t oreAmt = 0;      // trữ lượng
+    uint8_t fungus = 0;      // nấm hang / côn trùng (thức ăn của dơi)
+};
+
 enum class ItemKind : uint8_t { Corpse, Bones, OldTool, OldWeapon, Meat, Rock, Count };
 
 } // namespace wb

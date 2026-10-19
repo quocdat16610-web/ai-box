@@ -105,21 +105,21 @@ float MatterGrid::pressure(int x, int y) const {
 }
 
 void MatterGrid::addHeat(int x, int y, float d) {
-    if (x < 0 || y < 0 || x >= w_ || y >= h_) return;
+    if (y < 0 || y >= h_) return;
     int i = idx(x, y);
     temp_[i] += d;
     activate(i);
 }
 
 void MatterGrid::setTemp(int x, int y, float c) {
-    if (x < 0 || y < 0 || x >= w_ || y >= h_) return;
+    if (y < 0 || y >= h_) return;
     int i = idx(x, y);
     temp_[i] = c;
     activate(i);
 }
 
 int MatterGrid::addMatter(int x, int y, MatId m, int amount, float tempC) {
-    if (x < 0 || y < 0 || x >= w_ || y >= h_ || amount <= 0 || m == kNoMat) return 0;
+    if (y < 0 || y >= h_ || amount <= 0 || m == kNoMat) return 0;
     int i = idx(x, y);
     MatterCell& c = cells_[i];
     MatterSlot* slot = nullptr;
@@ -136,7 +136,7 @@ int MatterGrid::addMatter(int x, int y, MatId m, int amount, float tempC) {
 }
 
 int MatterGrid::takeMatter(int x, int y, MatId m, int amount) {
-    if (x < 0 || y < 0 || x >= w_ || y >= h_) return 0;
+    if (y < 0 || y >= h_) return 0;
     MatterCell& c = cells_[idx(x, y)];
     int got = 0;
     for (auto& s : c.s)
@@ -150,7 +150,7 @@ int MatterGrid::takeMatter(int x, int y, MatId m, int amount) {
 }
 
 void MatterGrid::addGas(int x, int y, MatId m, int amount) {
-    if (x < 0 || y < 0 || x >= w_ || y >= h_ || amount <= 0) return;
+    if (y < 0 || y >= h_ || amount <= 0) return;
     int i = idx(x, y);
     MatterSlot& g = cells_[i].gas;
     if (g.empty() || g.mat == m) { g.mat = m; g.amount = static_cast<uint16_t>(std::min(60000, g.amount + amount)); }
@@ -159,7 +159,7 @@ void MatterGrid::addGas(int x, int y, MatId m, int amount) {
 }
 
 void MatterGrid::setHeatSource(int x, int y, float targetC, int owner) {
-    if (x < 0 || y < 0 || x >= w_ || y >= h_) return;
+    if (y < 0 || y >= h_) return;
     MatterCell& c = cells_[idx(x, y)];
     c.heatTarget = targetC;
     c.heatOwner = static_cast<int16_t>(owner);
@@ -167,12 +167,12 @@ void MatterGrid::setHeatSource(int x, int y, float targetC, int owner) {
 }
 
 void MatterGrid::clearHeatSource(int x, int y) {
-    if (x < 0 || y < 0 || x >= w_ || y >= h_) return;
+    if (y < 0 || y >= h_) return;
     cells_[idx(x, y)].heatTarget = 0;
 }
 
 void MatterGrid::ignite(int x, int y) {
-    if (x < 0 || y < 0 || x >= w_ || y >= h_) return;
+    if (y < 0 || y >= h_) return;
     temp_[idx(x, y)] = std::max(temp_[idx(x, y)], 700.0f);
     activate(idx(x, y));
 }
@@ -183,7 +183,7 @@ void MatterGrid::explode(int x, int y, float energy, long tick) {
     for (int dy = -r; dy <= r; ++dy)
         for (int dx = -r; dx <= r; ++dx) {
             int nx = x + dx, ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= w_ || ny >= h_ || dx * dx + dy * dy > r * r) continue;
+            if (ny < 0 || ny >= h_ || dx * dx + dy * dy > r * r) continue;
             float falloff = 1.0f - std::sqrt(static_cast<float>(dx * dx + dy * dy)) / (r + 1);
             temp_[idx(nx, ny)] += 900 * falloff;
             addGas(nx, ny, mat::CO2, static_cast<int>(60 * falloff));
@@ -209,8 +209,8 @@ void MatterGrid::thermalStep(World& w) {
                 return cells_[j].heatTarget > 0 ? std::min(v, 90.0f) : v;
             };
             float sum = 0; int n = 0;
-            if (x > 0) { sum += nb(i - 1); n++; }
-            if (x < w_ - 1) { sum += nb(i + 1); n++; }
+            sum += nb(x > 0 ? i - 1 : i + w_ - 1); n++;          // quấn vòng kinh độ
+            sum += nb(x < w_ - 1 ? i + 1 : i - (w_ - 1)); n++;
             if (y > 0) { sum += nb(i - w_); n++; }
             if (y < h_ - 1) { sum += nb(i + w_); n++; }
             float avg = sum / n;
@@ -237,7 +237,7 @@ void MatterGrid::thermalStep(World& w) {
             for (int dx = -1; dx <= 1; ++dx) {
                 if (!dx && !dy) continue;
                 int nx = x + dx, ny = y + dy;
-                if (nx < 0 || ny < 0 || nx >= w_ || ny >= h_) continue;
+                if (ny < 0 || ny >= h_) continue;
                 float windBoost = 1.0f + 3.0f * std::max(0.0f, dx * wind.x + dy * wind.y) / 0.1f * 0.1f;
                 float& tn = temp_[idx(nx, ny)];
                 if (tn < 700) tn += 4.0f * windBoost * (1.2f - humidity * 0.6f); // không khí ẩm hấp thụ bớt bức xạ
@@ -272,7 +272,7 @@ void MatterGrid::fireStep(World& w, Rng& rng, long tick) {
             for (int dy = -1; dy <= 1; ++dy)
                 for (int dx = -1; dx <= 1; ++dx) {
                     int nx = x + dx, ny = y + dy;
-                    if (nx >= 0 && ny >= 0 && nx < w_ && ny < h_) tryIgnite(nx, ny);
+                    if (ny >= 0 && ny < h_) tryIgnite(nx, ny);
                 }
         }
         for (int i : active_) tryIgnite(i % w_, i / w_);
@@ -296,7 +296,7 @@ void MatterGrid::fireStep(World& w, Rng& rng, long tick) {
         for (int dy = -1; dy <= 1; ++dy)
             for (int dx = -1; dx <= 1; ++dx) {
                 int nx = x + dx, ny = y + dy;
-                if ((dx || dy) && nx >= 0 && ny >= 0 && nx < w_ && ny < h_ && w.at(nx, ny).fire) burnNb++;
+                if ((dx || dy) && ny >= 0 && ny < h_ && w.at(nx, ny).fire) burnNb++;
             }
         const MatterCell& c = cells_[i];
         bool lowO2 = burnNb >= 7 || (c.gas.mat == mat::CO2 && c.gas.amount > 150);
@@ -356,7 +356,7 @@ void MatterGrid::flowLiquids(World& w, int i) {
             // Bột trượt khi dốc vượt góc nghỉ
             for (int k = 0; k < 4; ++k) {
                 int nx = x + dx[k], ny = y + dy[k];
-                if (nx < 0 || ny < 0 || nx >= w_ || ny >= h_ || w.isWater(nx, ny)) continue;
+                if (ny < 0 || ny >= h_ || w.isWater(nx, ny)) continue;
                 float drop = (w.at(x, y).height - w.at(nx, ny).height) * kHeightScale + s.amount * kLiquidScale;
                 if (drop > 1.2f) { int mv = s.amount / 6; s.amount = static_cast<uint16_t>(s.amount - mv); addMatter(nx, ny, s.mat, mv); }
             }
@@ -366,7 +366,7 @@ void MatterGrid::flowLiquids(World& w, int i) {
         float fluidity = 1.0f - md.viscosity;
         for (int k = 0; k < 4 && s.amount > 0; ++k) {
             int nx = x + dx[k], ny = y + dy[k];
-            if (nx < 0 || ny < 0 || nx >= w_ || ny >= h_) continue;
+            if (ny < 0 || ny >= h_) continue;
             const Tile& nt = w.at(nx, ny);
             if (nt.building != Building::None && buildingInfo(nt.building).blocksMove) continue; // tường chặn nước/dung nham
             int ni = idx(nx, ny);
@@ -404,7 +404,7 @@ void MatterGrid::flowGas(World& w, int i, Rng& rng) {
     static const int dx[4] = {1, -1, 0, 0}, dy[4] = {0, 0, 1, -1};
     for (int k = 0; k < 4; ++k) {
         int nx = x + dx[k], ny = y + dy[k];
-        if (nx < 0 || ny < 0 || nx >= w_ || ny >= h_) continue;
+        if (ny < 0 || ny >= h_) continue;
         MatterSlot& ng = cells_[idx(nx, ny)].gas;
         if (!ng.empty() && ng.mat != g.mat) continue;
         float bias = 1.0f + (dx[k] * wind.x + dy[k] * wind.y) * 8.0f; // gió thổi khí đi

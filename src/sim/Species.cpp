@@ -81,6 +81,107 @@ void SpeciesRegistry::initDefaults() {
     goblin.baseHp = 35; goblin.baseDamage = 5; goblin.gestationTicks = 200; goblin.litterMax = 2;
     defs_.push_back(goblin);
 
+    // ---------------- Đa dạng sinh học ----------------
+    //                       Int   Str   Spd   Soc   Agg   Cur   Fer   Lon   Cold  Heat
+    SpeciesDef boar;
+    boar.name = "Lợn rừng"; boar.diet = Diet::Omnivore; boar.social = SocialType::Herd; boar.size = 0.8f;
+    boar.baseGenome = makeGenome({0.12f, 0.65f, 0.55f, 0.55f, 0.55f, 0.25f, 0.70f, 0.35f, 0.55f, 0.50f});
+    boar.r = 95; boar.g = 70; boar.b = 55; boar.adultYears = 1; boar.maxAgeYears = 14; boar.gestationTicks = 140; boar.litterMax = 4;
+    boar.baseHp = 50; boar.baseDamage = 7; boar.baseSpeed = 0.14f;
+    defs_.push_back(boar);
+
+    SpeciesDef mammoth;
+    mammoth.name = "Voi ma mút"; mammoth.diet = Diet::Herbivore; mammoth.social = SocialType::Herd; mammoth.size = 2.2f;
+    mammoth.plan = BodyPlan::Giant;
+    mammoth.baseGenome = makeGenome({0.20f, 0.95f, 0.35f, 0.75f, 0.30f, 0.25f, 0.25f, 0.75f, 0.95f, 0.15f});
+    mammoth.r = 120; mammoth.g = 85; mammoth.b = 60; mammoth.adultYears = 8; mammoth.maxAgeYears = 60; mammoth.gestationTicks = 600;
+    mammoth.baseHp = 260; mammoth.baseDamage = 18; mammoth.baseSpeed = 0.10f;
+    defs_.push_back(mammoth);
+
+    SpeciesDef fox;
+    fox.name = "Cáo"; fox.diet = Diet::Carnivore; fox.social = SocialType::Solitary; fox.size = 0.5f;
+    fox.baseGenome = makeGenome({0.22f, 0.30f, 0.80f, 0.25f, 0.40f, 0.55f, 0.60f, 0.30f, 0.65f, 0.45f});
+    fox.r = 215; fox.g = 120; fox.b = 50; fox.adultYears = 1; fox.maxAgeYears = 10; fox.gestationTicks = 120; fox.litterMax = 3;
+    fox.baseHp = 22; fox.baseDamage = 5; fox.baseSpeed = 0.18f;
+    defs_.push_back(fox);
+
+    // Khỉ: có chi trước khá khéo (gen 0.45) nhưng chưa "biết dùng tay" — có thể TIẾN HOÁ thành loài dùng công cụ
+    SpeciesDef monkey;
+    monkey.name = "Khỉ"; monkey.diet = Diet::Omnivore; monkey.social = SocialType::Pack; monkey.size = 0.6f;
+    monkey.plan = BodyPlan::Primate;
+    monkey.baseGenome = makeGenome({0.27f, 0.35f, 0.60f, 0.80f, 0.35f, 0.75f, 0.60f, 0.40f, 0.35f, 0.70f});
+    monkey.r = 150; monkey.g = 105; monkey.b = 70; monkey.adultYears = 4; monkey.maxAgeYears = 25; monkey.gestationTicks = 200;
+    monkey.baseHp = 30; monkey.baseDamage = 4; monkey.baseSpeed = 0.15f;
+    defs_.push_back(monkey);
+
+    SpeciesDef croc;
+    croc.name = "Cá sấu"; croc.diet = Diet::Carnivore; croc.social = SocialType::Solitary; croc.size = 1.4f;
+    croc.habitat = Habitat::Amphibious; croc.plan = BodyPlan::Reptile;
+    croc.baseGenome = makeGenome({0.12f, 0.80f, 0.35f, 0.15f, 0.75f, 0.15f, 0.40f, 0.85f, 0.20f, 0.85f});
+    croc.r = 70; croc.g = 105; croc.b = 60; croc.adultYears = 6; croc.maxAgeYears = 70; croc.gestationTicks = 300; croc.litterMax = 4;
+    croc.baseHp = 110; croc.baseDamage = 15; croc.baseSpeed = 0.09f;
+    defs_.push_back(croc);
+
+    SpeciesDef eagle;
+    eagle.name = "Đại bàng"; eagle.diet = Diet::Carnivore; eagle.social = SocialType::Solitary; eagle.size = 0.6f;
+    eagle.habitat = Habitat::Air; eagle.plan = BodyPlan::Bird;
+    eagle.baseGenome = makeGenome({0.20f, 0.45f, 0.90f, 0.15f, 0.50f, 0.40f, 0.35f, 0.50f, 0.60f, 0.55f});
+    eagle.r = 120; eagle.g = 90; eagle.b = 60; eagle.adultYears = 2; eagle.maxAgeYears = 25; eagle.gestationTicks = 200; eagle.litterMax = 2;
+    eagle.baseHp = 20; eagle.baseDamage = 6; eagle.baseSpeed = 0.24f;
+    defs_.push_back(eagle);
+
+    SpeciesDef sparrow;
+    sparrow.name = "Chim sẻ"; sparrow.diet = Diet::Herbivore; sparrow.social = SocialType::Herd; sparrow.size = 0.15f;
+    sparrow.habitat = Habitat::Air; sparrow.plan = BodyPlan::Bird;
+    sparrow.baseGenome = makeGenome({0.08f, 0.10f, 0.85f, 0.70f, 0.05f, 0.40f, 0.90f, 0.20f, 0.45f, 0.55f});
+    sparrow.r = 160; sparrow.g = 130; sparrow.b = 90; sparrow.adultYears = 1; sparrow.maxAgeYears = 4; sparrow.gestationTicks = 60; sparrow.litterMax = 4;
+    sparrow.baseHp = 5; sparrow.baseDamage = 0.5f; sparrow.baseSpeed = 0.22f;
+    defs_.push_back(sparrow);
+
+    SpeciesDef fish;
+    fish.name = "Cá"; fish.diet = Diet::Herbivore; fish.social = SocialType::Herd; fish.size = 0.3f;
+    fish.habitat = Habitat::Water; fish.plan = BodyPlan::Fish;
+    fish.baseGenome = makeGenome({0.05f, 0.15f, 0.70f, 0.75f, 0.05f, 0.20f, 0.95f, 0.25f, 0.55f, 0.50f});
+    fish.r = 120; fish.g = 175; fish.b = 200; fish.adultYears = 1; fish.maxAgeYears = 6; fish.gestationTicks = 60; fish.litterMax = 6;
+    fish.baseHp = 8; fish.baseDamage = 0.5f; fish.baseSpeed = 0.15f;
+    defs_.push_back(fish);
+
+    SpeciesDef shark;
+    shark.name = "Cá mập"; shark.diet = Diet::Carnivore; shark.social = SocialType::Solitary; shark.size = 1.5f;
+    shark.habitat = Habitat::Water; shark.plan = BodyPlan::Fish;
+    shark.baseGenome = makeGenome({0.15f, 0.80f, 0.70f, 0.10f, 0.80f, 0.25f, 0.30f, 0.70f, 0.50f, 0.50f});
+    shark.r = 110; shark.g = 125; shark.b = 140; shark.adultYears = 5; shark.maxAgeYears = 40; shark.gestationTicks = 400; shark.litterMax = 2;
+    shark.baseHp = 90; shark.baseDamage = 14; shark.baseSpeed = 0.17f;
+    defs_.push_back(shark);
+
+    SpeciesDef bat;
+    bat.name = "Dơi"; bat.diet = Diet::Herbivore; bat.social = SocialType::Herd; bat.size = 0.25f;
+    bat.habitat = Habitat::Cave; bat.plan = BodyPlan::Bat;
+    bat.baseGenome = makeGenome({0.10f, 0.10f, 0.80f, 0.85f, 0.10f, 0.30f, 0.80f, 0.40f, 0.60f, 0.50f});
+    bat.r = 70; bat.g = 60; bat.b = 75; bat.adultYears = 1; bat.maxAgeYears = 15; bat.gestationTicks = 120; bat.litterMax = 1;
+    bat.baseHp = 6; bat.baseDamage = 0.5f; bat.baseSpeed = 0.18f;
+    defs_.push_back(bat);
+
+    SpeciesDef spider;
+    spider.name = "Nhện hang"; spider.diet = Diet::Carnivore; spider.social = SocialType::Solitary; spider.size = 0.4f;
+    spider.habitat = Habitat::Cave; spider.plan = BodyPlan::Spider;
+    spider.baseGenome = makeGenome({0.10f, 0.40f, 0.55f, 0.05f, 0.85f, 0.20f, 0.70f, 0.30f, 0.60f, 0.50f});
+    spider.r = 60; spider.g = 50; spider.b = 45; spider.adultYears = 1; spider.maxAgeYears = 6; spider.gestationTicks = 150; spider.litterMax = 5;
+    spider.baseHp = 14; spider.baseDamage = 5; spider.baseSpeed = 0.13f;
+    defs_.push_back(spider);
+
+    // Sức chứa môi trường (tỉ lệ trần dân số): con mồi nhỏ nhiều, thú săn lớn ít, quái vật hiếm
+    const std::pair<int, float> caps[] = {
+        {sp::Wolf, 0.025f}, {sp::Deer, 0.07f}, {sp::Rabbit, 0.06f}, {sp::Bear, 0.012f}, {sp::Troll, 0.002f}, {sp::Goblin, 0.03f},
+        {sp::Boar, 0.03f}, {sp::Mammoth, 0.015f}, {sp::Fox, 0.012f}, {sp::Monkey, 0.03f}, {sp::Crocodile, 0.006f}, {sp::Eagle, 0.006f},
+        {sp::Sparrow, 0.04f}, {sp::Fish, 0.06f}, {sp::Shark, 0.006f}, {sp::Bat, 0.03f}, {sp::CaveSpider, 0.012f}};
+    for (auto& d : defs_) if (d.dexterous) d.capShare = 0.5f;
+    for (auto [id, c] : caps) defs_[id].capShare = c;
+
+    // Hình dáng: chủng tộc có tay khéo đứng thẳng
+    for (auto& d : defs_) if (d.dexterous) d.plan = BodyPlan::Humanoid;
+    defs_[sp::Troll].plan = BodyPlan::Humanoid;
+
     // Gen sinh học bổ sung: khéo tay, kích thước, bơi lội — cũng tiến hoá qua các thế hệ
     for (auto& d : defs_) {
         d.baseGenome[Gene::Dexterity] = d.dexterous ? 0.8f : 0.08f;
@@ -91,6 +192,11 @@ void SpeciesRegistry::initDefaults() {
     defs_[sp::Bear].baseGenome[Gene::Swimming] = 0.55f;
     defs_[sp::Deer].baseGenome[Gene::Swimming] = 0.4f;
     defs_[sp::Wolf].baseGenome[Gene::Dexterity] = 0.15f; // chân trước sói linh hoạt hơn hươu một chút
+    defs_[sp::Monkey].baseGenome[Gene::Dexterity] = 0.45f; // khỉ: bàn tay cầm nắm — sát ngưỡng tiến hoá thành loài dùng công cụ
+    defs_[sp::Crocodile].baseGenome[Gene::Swimming] = 0.95f;
+    defs_[sp::Fish].baseGenome[Gene::Swimming] = 1.0f;
+    defs_[sp::Shark].baseGenome[Gene::Swimming] = 1.0f;
+    defs_[sp::Mammoth].baseGenome[Gene::Size] = 0.8f;
 }
 
 bool SpeciesRegistry::canHunt(int a, int b) const {
@@ -98,6 +204,12 @@ bool SpeciesRegistry::canHunt(int a, int b) const {
     const SpeciesDef& B = defs_[b];
     if (A.diet == Diet::Herbivore) return false;
     if (root(a) == root(b)) return false; // không ăn thịt đồng loại
+    // Môi trường sống phải "chạm" nhau: thú trong hang không săn được thú trên mặt đất; cá mập
+    // chỉ săn dưới nước; thú cạn không bắt được cá (trừ loài lội nước/bay: cá sấu, đại bàng)
+    auto layer = [](Habitat h) { return h == Habitat::Cave ? 1 : 0; };
+    if (layer(A.habitat) != layer(B.habitat)) return false;
+    if (B.habitat == Habitat::Water && A.habitat != Habitat::Water && A.habitat != Habitat::Amphibious && A.habitat != Habitat::Air) return false;
+    if (A.habitat == Habitat::Water && B.habitat != Habitat::Water && B.habitat != Habitat::Amphibious) return false;
     if (A.monster) return true;
     // Thú săn những loài nhỏ hơn đáng kể hoặc ăn cỏ; loài có trí tuệ không là "con mồi" của nhau
     if (B.dexterous && !A.monster && A.diet != Diet::Carnivore) return false;

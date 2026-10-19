@@ -94,7 +94,10 @@ std::string fmt(const char* f, ...) {
 // ---------------------------------------------------------------------------
 void startWorld(App& app) {
     SimConfig cfg;
-    cfg.width = cfg.height = app.worldSize;
+    // Bản đồ trụ đẳng chữ nhật của một hành tinh: chiều rộng (kinh độ) = 2 × chiều cao (vĩ độ)
+    cfg.width = app.worldSize * 2;
+    cfg.height = app.worldSize;
+    cfg.worldType = app.worldType;
     cfg.seed = static_cast<uint32_t>(GetRandomValue(1, 1000000));
 #if defined(PLATFORM_ANDROID)
     cfg.maxPopulation = 3000; // điện thoại: giới hạn dân số thấp hơn để giữ 60 FPS
@@ -102,9 +105,10 @@ void startWorld(App& app) {
     app.sim = std::make_unique<Simulation>(cfg);
     setupScenario(*app.sim, app.scenario);
     app.renderer.init(*app.sim);
-    app.cam.target = {app.worldSize * kTileWorld / 2, app.worldSize * kTileWorld / 2};
+    app.cam.target = {cfg.width * kTileWorld / 2, cfg.height * kTileWorld / 2};
     app.cam.offset = {GetScreenWidth() / 2.0f, GetScreenHeight() / 2.0f};
-    app.cam.zoom = std::max(GetScreenWidth(), GetScreenHeight()) / (app.worldSize * kTileWorld) * 1.1f;
+    app.cam.zoom = GetScreenHeight() / (cfg.height * kTileWorld) * 1.6f;
+    app.globe = false;
     // Kịch bản cụ thể: đưa camera tới nhóm đầu tiên
     if (app.scenario != Scenario::Sandbox && !app.sim->agents.empty()) {
         Vec2 p = app.sim->reg.get<Transform>(app.sim->agents.front()).pos;
@@ -117,11 +121,36 @@ void startWorld(App& app) {
     app.speedIdx = 1;
 }
 
+// Mức thu nhỏ tối thiểu của bản đồ phẳng: nhìn thấy trọn từ cực bắc tới cực nam.
+// Thu nhỏ hơn nữa → chuyển sang xem quả địa cầu.
+float minZoom2D(const App& app) { return GetScreenHeight() / (app.sim->world.height() * kTileWorld) * 0.98f; }
+
+void enterGlobe(App& app) {
+    const World& w = app.sim->world;
+    float tx = WrapSpace::wrapX(app.cam.target.x / kTileWorld), ty = app.cam.target.y / kTileWorld;
+    app.globeView.lon = tx / w.width() * 6.2831853f;
+    app.globeView.lat = std::clamp((0.5f - ty / w.height()) * 3.14159265f, -1.3f, 1.3f);
+    app.globeView.dist = 4.2f;
+    app.globe = true;
+}
+
+// Rời quả địa cầu, phóng xuống bản đồ phẳng tại (kinh độ, vĩ độ)
+void exitGlobe(App& app, float lon, float lat, float zoomMul) {
+    const World& w = app.sim->world;
+    float x = std::fmod(lon / 6.2831853f + 10.0f, 1.0f) * w.width();
+    float y = (0.5f - lat / 3.14159265f) * w.height();
+    app.cam.target = {x * kTileWorld, y * kTileWorld};
+    app.cam.zoom = minZoom2D(app) * zoomMul;
+    app.globe = false;
+}
+
 void clampCamera(App& app) {
     float W = app.sim->world.width() * kTileWorld, H = app.sim->world.height() * kTileWorld;
-    app.cam.zoom = std::clamp(app.cam.zoom, 0.3f, 12.0f);
-    app.cam.target.x = std::clamp(app.cam.target.x, 0.0f, W);
-    app.cam.target.y = std::clamp(app.cam.target.y, 0.0f, H);
+    app.cam.zoom = std::clamp(app.cam.zoom, minZoom2D(app), 12.0f);
+    app.cam.target.x = std::fmod(std::fmod(app.cam.target.x, W) + W, W);   // quấn vòng đông–tây
+    // không cho cuộn quá hai cực (giữ khung nhìn trong bản đồ theo chiều dọc)
+    float halfH = GetScreenHeight() * 0.5f / app.cam.zoom;
+    app.cam.target.y = halfH * 2 >= H ? H * 0.5f : std::clamp(app.cam.target.y, halfH, H - halfH);
 }
 
 // ---------------------------------------------------------------------------
@@ -134,7 +163,7 @@ bool overUi(App& app, Vector2 p) {
 
 void selectAt(App& app, Vector2 worldPx) {
     Simulation& sim = *app.sim;
-    Vec2 wp{worldPx.x / kTileWorld, worldPx.y / kTileWorld};
+    Vec2 wp = wrapPos({worldPx.x / kTileWorld, worldPx.y / kTileWorld});
     Entity best = NullEntity;
     float bd = (1.5f / std::min(1.0f, app.cam.zoom / 2)) * (1.5f / std::min(1.0f, app.cam.zoom / 2));
     sim.grid.query(wp, 3.0f, [&](Entity e, Vec2 p) {
@@ -156,6 +185,48 @@ void selectAt(App& app, Vector2 worldPx) {
     app.opt.selected = NullEntity;
 }
 
+// Nhập liệu khi xem quả địa cầu: kéo = xoay hành tinh, lăn/chụm = phóng to/thu nhỏ,
+// chạm = bay xuống bản đồ tại điểm đó.
+void handleGlobeInput(App& app) {
+    GlobeView& gv = app.globeView;
+    Vector2 mp = GetMousePosition();
+    int touches = GetTouchPointCount();
+    float rot = 1.6f / (GetScreenHeight() * 0.5f) * (gv.dist - 1.0f) / 1.6f;   // kéo hết nửa màn hình ≈ xoay 1 radian khi ở gần
+    if (touches >= 2) {
+        Vector2 a = GetTouchPosition(0), b = GetTouchPosition(1);
+        float d = std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
+        if (!app.pinching) { app.pinching = true; app.pinchStartDist = std::max(10.0f, d); app.pinchStartZoom = gv.dist; }
+        else gv.dist = std::clamp(app.pinchStartZoom * app.pinchStartDist / d, 1.25f, 7.0f);
+        app.pointerDownOnWorld = false;
+    } else if (app.pinching && touches == 0) app.pinching = false;
+    float wheel = GetMouseWheelMove();
+    if (wheel != 0 && !overUi(app, mp)) gv.dist = std::clamp(gv.dist * std::pow(0.88f, wheel), 1.25f, 7.0f);
+    if (!app.pinching) {
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) { app.pressPos = mp; app.lastPointer = mp; app.dragMoved = false; app.pointerDownOnWorld = !overUi(app, mp); }
+        if (app.pointerDownOnWorld && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            Vector2 d{mp.x - app.lastPointer.x, mp.y - app.lastPointer.y};
+            if (std::fabs(mp.x - app.pressPos.x) + std::fabs(mp.y - app.pressPos.y) > 12 * app.uiScale) app.dragMoved = true;
+            if (app.dragMoved) { gv.lon -= d.x * rot; gv.lat = std::clamp(gv.lat + d.y * rot, -1.45f, 1.45f); }
+            app.lastPointer = mp;
+        }
+        if (app.pointerDownOnWorld && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+            app.pointerDownOnWorld = false;
+            if (!app.dragMoved) {
+                // Chạm vào mặt cầu → bay xuống đúng điểm đó
+                RayCollision hit = GetRayCollisionSphere(GetMouseRay(mp, globeCamera(gv)), {0, 0, 0}, 1.0f);
+                if (hit.hit) { exitGlobe(app, std::atan2(-hit.point.z, hit.point.x), std::asin(std::clamp(hit.point.y, -1.0f, 1.0f)), 2.5f); return; }
+            }
+        }
+    }
+    float dt = GetFrameTime();
+    if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) gv.lon -= dt * 1.2f;
+    if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) gv.lon += dt * 1.2f;
+    if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) gv.lat = std::min(1.45f, gv.lat + dt);
+    if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) gv.lat = std::max(-1.45f, gv.lat - dt);
+    // Phóng đủ gần → trở lại bản đồ phẳng tại điểm đối diện camera
+    if (gv.dist <= 1.3f) exitGlobe(app, gv.lon, gv.lat, 1.05f);
+}
+
 void handleWorldInput(App& app) {
     Simulation& sim = *app.sim;
     float dt = GetFrameTime();
@@ -170,6 +241,7 @@ void handleWorldInput(App& app) {
         } else {
             Vector2 before = GetScreenToWorld2D(mid, app.cam);
             app.cam.zoom = app.pinchStartZoom * d / app.pinchStartDist;
+            if (app.cam.zoom < minZoom2D(app) * 0.8f) { enterGlobe(app); app.pinching = false; app.pointerDownOnWorld = false; return; }
             clampCamera(app);
             Vector2 after = GetScreenToWorld2D(mid, app.cam);
             app.cam.target.x += before.x - after.x; app.cam.target.y += before.y - after.y;
@@ -187,6 +259,7 @@ void handleWorldInput(App& app) {
     // ---- Lăn chuột: zoom quanh con trỏ ----
     float wheel = GetMouseWheelMove();
     if (wheel != 0 && !overUi(app, mp)) {
+        if (wheel < 0 && app.cam.zoom <= minZoom2D(app) * 1.001f) { enterGlobe(app); return; }   // thu nhỏ hết → quả địa cầu
         Vector2 before = GetScreenToWorld2D(mp, app.cam);
         app.cam.zoom *= std::pow(1.15f, wheel);
         clampCamera(app);
@@ -612,7 +685,8 @@ void drawHud(App& app) {
             if (button({tx, rowY2, toolW, bh}, "Hoá học", app.panel == SidePanel::Chemistry))
                 app.panel = app.panel == SidePanel::Chemistry ? SidePanel::None : SidePanel::Chemistry;
             tx += toolW + 4 * s;
-            ui::drawText("Chạm sinh vật: xem suy nghĩ · chạm lãnh thổ: nền văn minh · kéo: di chuyển · chụm 2 ngón: phóng to",
+            ui::drawText(app.globe ? "Kéo: xoay hành tinh · chạm: hạ xuống điểm đó · chụm/lăn chuột: phóng to (đủ gần sẽ về bản đồ)"
+                                   : "Chạm sinh vật: xem suy nghĩ · chạm lãnh thổ: nền văn minh · kéo: di chuyển · thu nhỏ hết: quả địa cầu",
                          tx + 6 * s, rowY2 + (bh - 13 * s) / 2, 13 * s, kMuted);
         }
     } else {
@@ -653,33 +727,52 @@ void drawMenu(App& app) {
         uint32_t h = hash32(i * 977);
         DrawRectangle(static_cast<int>(h % W), static_cast<int>((h >> 12) % H), 3, 3, Color{60, 90, 140, static_cast<unsigned char>(40 + (h >> 24) % 80)});
     }
+    // Bố cục co giãn: màn hình ngang thấp (điện thoại xoay ngang) → chia 2 cột để vừa chiều cao
+    const int nsc = static_cast<int>(Scenario::Count), nwt = static_cast<int>(WorldType::Count);
+    float bh = 50 * s, gap = 8 * s;
+    float tfs = 46 * s, sfs = 14 * s;
+    float headerH = tfs * 1.2f + sfs * 1.8f;
+    float colH = nsc * (bh + gap) + bh * 0.8f + gap + 3 * (bh * 0.8f + gap) + bh * 1.2f + bh;   // chiều cao bố cục 1 cột
+    bool twoCols = H < headerH + colH + 40 * s && W > H;
+    if (twoCols) { float k = std::clamp((H - 20 * s) / (headerH + colH * 0.55f), 0.6f, 1.0f); bh *= k; gap *= k; tfs *= k; sfs *= k; headerH = tfs * 1.2f + sfs * 1.8f; }
+    float top = twoCols ? 8 * s : H * 0.06f;
     std::string title = "WorldBox AI";
-    float tfs = 54 * s;
-    ui::drawText(title, (W - ui::measureText(title, tfs)) / 2, H * 0.1f, tfs, Color{255, 220, 120, 255});
+    ui::drawText(title, (W - ui::measureText(title, tfs)) / 2, top, tfs, Color{255, 220, 120, 255});
     std::string sub = "Sandbox thần thánh — mỗi sinh vật có một bộ óc riêng, tự tiến hoá thành nền văn minh";
-    float sfs = 15 * s;
     if (ui::measureText(sub, sfs) > W - 20) sfs *= (W - 20) / ui::measureText(sub, sfs);
-    ui::drawText(sub, (W - ui::measureText(sub, sfs)) / 2, H * 0.1f + tfs * 1.2f, sfs, kMuted);
+    ui::drawText(sub, (W - ui::measureText(sub, sfs)) / 2, top + tfs * 1.15f, sfs, kMuted);
 
-    float bw = std::min(420 * s, W - 40.0f), bh = 54 * s;
-    float x = (W - bw) / 2, y = H * 0.28f;
-    const char* desc[] = {"4 chủng tộc, động vật, quái vật", "Bầy sói học săn theo bầy → bộ tộc sói", "Người nguyên thuỷ → công cụ → làng → quốc gia",
-                          "Hai nhóm nhân bản, hai môi trường → hai con đường"};
-    for (int i = 0; i < static_cast<int>(Scenario::Count); ++i) {
-        if (button({x, y, bw, bh}, std::string(scenarioName(static_cast<Scenario>(i))) + " — " + desc[i], app.scenario == static_cast<Scenario>(i)))
+    float y0 = top + headerH + gap;
+    float colW = twoCols ? std::min(460 * s, (W - 30 * s) / 2) : std::min(440 * s, W - 30.0f);
+    float xL = twoCols ? W / 2.0f - colW - 6 * s : (W - colW) / 2;
+    float xR = twoCols ? W / 2.0f + 6 * s : xL;
+    // ---- Cột trái: kịch bản ----
+    const char* desc[] = {"4 chủng tộc + muông thú trên cạn, biển, trời, hang", "Bầy sói học săn theo bầy → bộ tộc sói",
+                          "Người nguyên thuỷ → công cụ → làng → quốc gia", "Hai nhóm nhân bản, hai môi trường → hai con đường"};
+    float y = y0;
+    for (int i = 0; i < nsc; ++i) {
+        if (button({xL, y, colW, bh}, std::string(scenarioName(static_cast<Scenario>(i))) + " — " + desc[i], app.scenario == static_cast<Scenario>(i)))
             app.scenario = static_cast<Scenario>(i);
-        y += bh + 10 * s;
+        y += bh + gap;
     }
-    y += 6 * s;
-    const int sizes[] = {128, 192, 256};
+    if (twoCols) y = y0;
+    // ---- Cột phải (hoặc tiếp theo): kích thước + kiểu hành tinh + bắt đầu ----
+    const int sizes[] = {96, 128, 160};
     const char* sizeNames[] = {"Nhỏ", "Vừa", "Lớn"};
-    float sw = (bw - 20 * s) / 3;
+    float sw = (colW - 2 * gap) / 3;
     for (int i = 0; i < 3; ++i)
-        if (button({x + i * (sw + 10 * s), y, sw, bh * 0.8f}, std::string("Bản đồ ") + sizeNames[i], app.worldSize == sizes[i])) app.worldSize = sizes[i];
-    y += bh * 0.8f + 20 * s;
-    if (button({x, y, bw, bh * 1.2f}, "BẮT ĐẦU", false, Color{60, 140, 80, 255})) startWorld(app);
-    y += bh * 1.2f + 10 * s;
-    if (app.sim && button({x, y, bw, bh * 0.9f}, "Tiếp tục thế giới hiện tại")) app.inMenu = false;
+        if (button({xR + i * (sw + gap), y, sw, bh * 0.8f}, std::string("Hành tinh ") + sizeNames[i], app.worldSize == sizes[i])) app.worldSize = sizes[i];
+    y += bh * 0.8f + gap;
+    // Kiểu hành tinh: lưới 3 × 2
+    float tw = (colW - 2 * gap) / 3;
+    for (int i = 0; i < nwt; ++i) {
+        Rectangle r{xR + (i % 3) * (tw + gap), y + (i / 3) * (bh * 0.8f + gap), tw, bh * 0.8f};
+        if (button(r, worldTypeName(static_cast<WorldType>(i)), app.worldType == static_cast<WorldType>(i))) app.worldType = static_cast<WorldType>(i);
+    }
+    y += 2 * (bh * 0.8f + gap) + gap;
+    if (button({xR, y, colW, bh * 1.2f}, "BẮT ĐẦU", false, Color{60, 140, 80, 255})) startWorld(app);
+    y += bh * 1.2f + gap;
+    if (app.sim && button({xR, y, colW, bh * 0.85f}, "Tiếp tục thế giới hiện tại")) app.inMenu = false;
     if (!ui::hasUnicodeFont())
         ui::drawText("(Không tìm thấy font Unicode — chữ hiển thị không dấu)", 10, H - 24 * s, 12 * s, kMuted);
 }
@@ -692,7 +785,7 @@ void appInit(App& app) {
     app.uiScale = std::clamp(minDim / 620.0f, 0.9f, 3.0f);
 #if defined(PLATFORM_ANDROID)
     app.uiScale = std::clamp(minDim / 500.0f, 1.2f, 3.5f); // ngón tay to hơn con trỏ chuột
-    app.worldSize = 128;
+    app.worldSize = 96;
 #endif
     ui::initText(16 * app.uiScale);
 }
@@ -704,8 +797,25 @@ void appShutdown(App& app) {
     ui::shutdownText();
 }
 
+// Màn hình đổi kích thước (xoay điện thoại dọc ↔ ngang, kéo cửa sổ PC): tính lại tỉ lệ
+// giao diện và tâm camera, nếu không mọi thứ bị lệch / kéo giãn.
+void handleResize(App& app) {
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    if (W == app.lastW && H == app.lastH) return;
+    app.lastW = W; app.lastH = H;
+    float minDim = static_cast<float>(std::min(W, H));
+#if defined(PLATFORM_ANDROID)
+    app.uiScale = std::clamp(minDim / 500.0f, 1.2f, 3.5f);
+#else
+    app.uiScale = std::clamp(minDim / 620.0f, 0.9f, 3.0f);
+#endif
+    app.cam.offset = {W / 2.0f, H / 2.0f};
+    if (app.sim) clampCamera(app);
+}
+
 void appFrame(App& app) {
     gApp = &app;
+    handleResize(app);
     app.uiRectsPrev.swap(app.uiRects);
     app.uiRects.clear();
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) app.pressPos = GetMousePosition();
@@ -725,7 +835,8 @@ void appFrame(App& app) {
     if (IsKeyPressed(KEY_TAB)) app.panel = app.panel == SidePanel::Chronicle ? SidePanel::None : SidePanel::Chronicle;
     if (IsKeyPressed(KEY_BACK) || IsKeyPressed(KEY_ESCAPE)) app.inMenu = true; // nút Back Android
 
-    handleWorldInput(app);
+    if (app.globe) handleGlobeInput(app);
+    else handleWorldInput(app);
 
     // ---- Mô phỏng: bước thời gian cố định, giới hạn ngân sách thời gian mỗi khung ----
     app.tickAccum += GetFrameTime() * kTicksPerSecond * kSpeeds[app.speedIdx];
@@ -739,11 +850,18 @@ void appFrame(App& app) {
     // LOD: báo cho mô phỏng vùng đang nhìn
     Vector2 tl = GetScreenToWorld2D({0, 0}, app.cam);
     Vector2 br = GetScreenToWorld2D({static_cast<float>(GetScreenWidth()), static_cast<float>(GetScreenHeight())}, app.cam);
-    sim.setFocusRect(tl.x / kTileWorld, tl.y / kTileWorld, br.x / kTileWorld, br.y / kTileWorld);
+    if (app.globe) sim.setFocusRect(-1, -1, -1, -1);   // nhìn cả hành tinh: không vùng nào được ưu tiên
+    else sim.setFocusRect(tl.x / kTileWorld, tl.y / kTileWorld, br.x / kTileWorld, br.y / kTileWorld);
     // Texture địa hình: cập nhật thưa (mỗi 4 khung) để tiết kiệm băng thông GPU
     if (app.frame % 4 == 0 || sim.world.fullRedraw) app.renderer.sync(sim);
 
     BeginDrawing();
+    if (app.globe) {
+        app.renderer.drawGlobe(sim, app.globeView, app.opt, static_cast<float>(GetTime()), app.uiScale);
+        drawHud(app);
+        EndDrawing();
+        return;
+    }
     ClearBackground(Color{20, 40, 80, 255});
     BeginMode2D(app.cam);
     app.renderer.drawWorld(sim, app.cam, app.opt, static_cast<float>(GetTime()));

@@ -71,10 +71,12 @@ if (WB_BUILD_GAME)
     set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(BUILD_GAMES OFF CACHE BOOL "" FORCE)
     set(CUSTOMIZE_BUILD OFF CACHE BOOL "" FORCE)
+    # Bản vá nhỏ cho raylib 5.5: xử lý xoay màn hình trên Android (xem cmake/PatchRaylibAndroid.cmake)
     FetchContent_Declare(raylib
         GIT_REPOSITORY https://github.com/raysan5/raylib.git
         GIT_TAG 5.5
-        GIT_SHALLOW TRUE)
+        GIT_SHALLOW TRUE
+        PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchRaylibAndroid.cmake)
     FetchContent_MakeAvailable(raylib)
 
     set(GAME_SOURCES

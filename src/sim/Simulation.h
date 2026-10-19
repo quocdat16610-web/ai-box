@@ -32,6 +32,7 @@ namespace wb {
 struct SimConfig {
     int width = 192, height = 192;
     uint32_t seed = 12345;
+    WorldType worldType = WorldType::Continents; // kiểu hành tinh: siêu lục địa, nhiều châu lục, quần đảo…
     float mutationRate = 1.0f;   // hệ số tốc độ đột biến gen (tiến hoá nhanh/chậm)
     float learningRate = 1.0f;   // hệ số tốc độ học / phát minh
     int maxPopulation = 5000;    // trần dân số để bảo vệ hiệu năng (nhất là trên điện thoại)
@@ -40,11 +41,13 @@ struct SimConfig {
 
 struct SimStats {
     int population = 0, groups = 0, nations = 0, species = 0;
+    int wildPopulation = 0;   // thú hoang (loài không có tay khéo)
     int births = 0, deaths = 0;
     float avgIntellect = 0;
     int thinksLastTick = 0;
     int inventAttempts = 0, inventTried = 0, inventSuccess = 0, crafts = 0, experiments = 0, productions = 0;
     int sapientDeaths[5] = {0, 0, 0, 0, 0}; // tử vong của loài có tay khéo theo nguyên nhân (già/đói/bị giết/thiên tai/lạnh)
+    int carnivoreDeaths[5] = {0, 0, 0, 0, 0}; // tử vong của thú ăn thịt (theo dõi cân bằng sinh thái)
 };
 
 class SocietySystem;
@@ -60,8 +63,17 @@ public:
     Entity spawnCreature(int species, Vec2 pos, const Genome* genome = nullptr,
                          Entity mother = NullEntity, Entity father = NullEntity);
     void kill(Entity e, int cause);
-    // Tìm ô đi được gần (x,y) để thả sinh vật.
-    bool findSpawnTile(int& x, int& y, int radius = 6);
+    // Tìm ô sống được gần (x,y) để thả sinh vật (species < 0: ô đi bộ được).
+    bool findSpawnTile(int& x, int& y, int radius = 6, int species = -1);
+
+    // ---- Môi trường sống theo loài (cạn / nước / trời / hang) ----
+    // Loài có thể ở / đi qua ô (x, y) không — dùng cho di chuyển, sinh sản, thả sinh vật.
+    bool habitable(int species, int x, int y) const;
+    // Thức ăn thực vật loài này ăn được tại ô: cỏ quả (trên cạn), tảo (dưới nước), nấm & côn trùng (trong hang).
+    int foodAt(int species, int x, int y) const;
+    void eatFoodAt(int species, int x, int y, int amount);
+    // Tầng sống: 0 = mặt đất/nước/trời, 1 = lòng đất (hang). Sinh vật khác tầng không thấy nhau.
+    int layerOf(int species) const { return this->species[species].habitat == Habitat::Cave ? 1 : 0; }
 
     // ---- Nhóm xã hội ----
     int createGroup(Entity founder);

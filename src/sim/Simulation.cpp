@@ -39,8 +39,8 @@ void Simulation::reset(const SimConfig& c) {
     tick = 0;
     stats_ = SimStats{};
     rng.reseed(cfg.seed);
-    world.generate(cfg.width, cfg.height, cfg.seed);
-    grid.init(cfg.width, cfg.height, 8);
+    world.generate(cfg.width, cfg.height, cfg.seed, cfg.worldType);
+    grid.init(cfg.width, cfg.height, 8, true);   // hành tinh quấn vòng đông–tây
     species.initDefaults();
     speciesLang_.clear();
     for (int i = 0; i < species.count(); ++i)
@@ -59,20 +59,45 @@ std::string Simulation::dateString() const {
     return "Năm " + std::to_string(year) + ", tháng " + std::to_string(month);
 }
 
-bool Simulation::findSpawnTile(int& x, int& y, int radius) {
+bool Simulation::findSpawnTile(int& x, int& y, int radius, int sp) {
     int ox, oy;
-    if (world.inBounds(x, y) && world.walkable(x, y)) return true;
-    if (world.findNearestTile(x, y, radius, [&](const Tile&, int tx, int ty) { return world.walkable(tx, ty); }, ox, oy)) {
+    auto ok = [&](int tx, int ty) { return sp < 0 ? world.walkable(tx, ty) : habitable(sp, tx, ty); };
+    if (world.inBounds(x, y) && ok(x, y)) return true;
+    if (world.findNearestTile(x, y, radius, [&](const Tile&, int tx, int ty) { return ok(tx, ty); }, ox, oy)) {
         x = ox; y = oy; return true;
     }
     return false;
 }
 
+bool Simulation::habitable(int sp, int x, int y) const {
+    if (!world.inBounds(x, y)) return false;
+    switch (species[sp].habitat) {
+    case Habitat::Water: return world.isWater(x, y);
+    case Habitat::Air: return world.at(x, y).terrain != Terrain::Lava;   // bay qua mọi thứ trừ miệng núi lửa
+    case Habitat::Cave: return world.caveOpen(x, y);
+    case Habitat::Amphibious: return world.walkable(x, y) || world.isWater(x, y);
+    default: return world.walkable(x, y);
+    }
+}
+
+int Simulation::foodAt(int sp, int x, int y) const {
+    if (!habitable(sp, x, y)) return 0;
+    if (species[sp].habitat == Habitat::Cave) return world.under(x, y).fungus;
+    return world.at(x, y).food;
+}
+
+void Simulation::eatFoodAt(int sp, int x, int y, int amount) {
+    if (!world.inBounds(x, y)) return;
+    uint8_t& f = species[sp].habitat == Habitat::Cave ? world.under(x, y).fungus : world.at(x, y).food;
+    f = static_cast<uint8_t>(std::max(0, f - amount));
+}
+
 Entity Simulation::spawnCreature(int sp, Vec2 pos, const Genome* genome, Entity mother, Entity father) {
     if (static_cast<int>(agents.size()) >= cfg.maxPopulation) return NullEntity;
+    pos = wrapPos(pos);
     int tx = static_cast<int>(pos.x), ty = static_cast<int>(pos.y);
-    if (!findSpawnTile(tx, ty)) return NullEntity;
-    if (!world.walkable(static_cast<int>(pos.x), static_cast<int>(pos.y))) pos = {tx + 0.5f, ty + 0.5f};
+    if (!findSpawnTile(tx, ty, species[sp].habitat == Habitat::Cave ? 14 : 6, sp)) return NullEntity;
+    if (!habitable(sp, static_cast<int>(pos.x), static_cast<int>(pos.y))) pos = {tx + 0.5f, ty + 0.5f};
     const SpeciesDef& sd = species[sp];
     Entity e = reg.create();
     Genome g;
@@ -218,7 +243,7 @@ void Simulation::metabolism() {
         // Nhiệt độ THẬT (°C) từ lớp vật chất: lạnh, nóng, bỏng lửa, khí độc
         if ((b.ageTicks + entityIndex(e)) % 10 == 0) {
             int x = static_cast<int>(tr.pos.x), y = static_cast<int>(tr.pos.y);
-            float t = world.temperatureAt(x, y);
+            float t = sd.habitat == Habitat::Cave ? 13.0f : world.temperatureAt(x, y);   // lòng đất: nhiệt độ ổn định quanh năm
             float coldLimit = 8.0f - g[Gene::ColdResist] * 35.0f;   // lông dày / mỡ → chịu lạnh tốt
             float heatLimit = 34.0f + g[Gene::HeatResist] * 20.0f;
             float stress = std::max(0.0f, coldLimit - t) / 15.0f + std::max(0.0f, t - heatLimit) / 15.0f;
@@ -248,7 +273,7 @@ void Simulation::metabolism() {
         // Ngoại lực (nổ, bị đạn bắn trúng) đẩy cơ thể đi, ma sát làm tắt dần
         if (tr.push.len2() > 1e-4f) {
             Vec2 np = tr.pos + tr.push;
-            if (world.walkable(static_cast<int>(np.x), static_cast<int>(np.y))) tr.pos = np;
+            if (habitable(b.species, static_cast<int>(std::floor(np.x)), static_cast<int>(np.y))) tr.pos = wrapPos(np);
             else tr.push = Vec2{};
             tr.push = tr.push * 0.8f;
         }
@@ -303,6 +328,7 @@ void Simulation::cleanupDead() {
         leaveGroup(e);
         stats_.deaths++;
         if (species[b.species].dexterous) stats_.sapientDeaths[std::clamp(b.deathCause, 0, 4)]++;
+        else if (species[b.species].diet == Diet::Carnivore) stats_.carnivoreDeaths[std::clamp(b.deathCause, 0, 4)]++;
         reg.destroy(e);
     }
     dying_.clear();
@@ -348,6 +374,8 @@ void Simulation::step() {
         intel += reg.get<Mind>(e).intellect;
     }
     stats_.population = static_cast<int>(agents.size());
+    stats_.wildPopulation = 0;
+    for (auto& s : species.all()) if (!s.dexterous) stats_.wildPopulation += s.population;
     stats_.avgIntellect = agents.empty() ? 0 : intel / agents.size();
     stats_.groups = 0; stats_.nations = 0;
     for (auto& g : groups) if (g.alive) { stats_.groups++; stats_.nations += g.stage == Stage::Nation; }

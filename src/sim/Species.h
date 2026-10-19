@@ -16,6 +16,12 @@ namespace wb {
 
 enum class Diet : uint8_t { Herbivore, Carnivore, Omnivore };
 enum class SocialType : uint8_t { Solitary, Herd, Pack, Tribal };
+// Môi trường sống: quyết định đi/bơi/bay ở đâu, ăn gì, nhìn thấy ai.
+//   Land  — trên cạn          Water — dưới nước (cá, cá mập)     Air — bay khắp nơi (chim, đại bàng)
+//   Cave  — trong hang động dưới lòng đất (dơi, nhện hang)       Amphibious — cả cạn lẫn nước (cá sấu)
+enum class Habitat : uint8_t { Land, Water, Air, Cave, Amphibious };
+// Hình dáng cơ thể (để vẽ sprite 2D và hình khối 3D ở góc nhìn thứ nhất)
+enum class BodyPlan : uint8_t { Humanoid, Quadruped, Bird, Fish, Bat, Spider, Reptile, Giant, Primate };
 
 struct SpeciesDef {
     std::string name;
@@ -23,6 +29,9 @@ struct SpeciesDef {
     SocialType social = SocialType::Tribal;
     bool dexterous = false;    // có "tay khéo" → chế tạo công cụ, xây nhà
     bool monster = false;      // quái vật (hung hãn với mọi loài)
+    Habitat habitat = Habitat::Land;
+    float capShare = 0.05f;    // sức chứa môi trường: tỉ lệ tối đa của trần dân số thế giới (loài tiến hoá kế thừa)
+    BodyPlan plan = BodyPlan::Quadruped;
     float size = 1.0f;         // kích thước tương đối (ảnh hưởng săn mồi, sức khoẻ)
     float baseHp = 60, baseDamage = 6, baseSpeed = 0.12f; // tốc độ: ô/tick
     int adultYears = 14, maxAgeYears = 70;
@@ -57,7 +66,12 @@ private:
 
 // Id cố định của các loài mặc định (thứ tự trong initDefaults).
 namespace sp {
-enum : int { Human = 0, Elf, Orc, Dwarf, Wolf, Deer, Rabbit, Bear, Troll, Goblin, DefaultCount };
+enum : int {
+    Human = 0, Elf, Orc, Dwarf, Wolf, Deer, Rabbit, Bear, Troll, Goblin,
+    // Đa dạng sinh học: trên cạn, dưới nước, trên trời, trong hang
+    Boar, Mammoth, Fox, Monkey, Crocodile, Eagle, Sparrow, Fish, Shark, Bat, CaveSpider,
+    DefaultCount
+};
 }
 
 } // namespace wb
