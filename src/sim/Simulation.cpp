@@ -86,6 +86,51 @@ bool Simulation::habitable(int sp, int x, int y) const {
     }
 }
 
+float Simulation::endurance(Entity e, int x, int y) {
+    if (!world.inBounds(x, y)) return 0;
+    const Body& b = reg.get<Body>(e);
+    if (habitable(b.species, x, y)) return kInfinite;
+    const Habitat hab = species[b.species].habitat;
+    float swim = reg.get<GenomeC>(e).genome[Gene::Swimming];
+    const Tile& t = world.at(x, y);
+    if (hab == Habitat::Land) {
+        if (!world.isWater(x, y)) return 0;                                   // vách núi, dung nham...
+        if (heldValue(*this, e, Purpose::Float) >= 60.0f) return kInfinite;   // bè / thuyền
+        if (t.terrain == Terrain::ShallowWater) return 300.0f + 600.0f * swim; // lội: mỏi chân nhưng lâu
+        return 25.0f + 150.0f * swim;                                         // bơi / lặn ở nước sâu
+    }
+    if (hab == Habitat::Water) {
+        if (t.terrain == Terrain::Lava || !world.walkable(x, y)) return 0;
+        return 6.0f;   // cá mắc cạn: quẫy được vài giây
+    }
+    return 0;   // loài trong hang / trên trời: chưa có môi trường "lạ" để vào
+}
+
+float Simulation::envSpeed(Entity e, int x, int y) {
+    if (!world.inBounds(x, y)) return 1.0f;
+    const Body& b = reg.get<Body>(e);
+    if (habitable(b.species, x, y)) return 1.0f;
+    float swim = reg.get<GenomeC>(e).genome[Gene::Swimming];
+    if (species[b.species].habitat == Habitat::Land && world.isWater(x, y)) {
+        if (heldValue(*this, e, Purpose::Float) >= 60.0f) return 1.0f;
+        return world.at(x, y).terrain == Terrain::ShallowWater ? 0.55f + 0.4f * swim : 0.25f + 0.6f * swim;
+    }
+    if (species[b.species].habitat == Habitat::Water) return 0.15f;   // cá quẫy trên cạn
+    return 1.0f;
+}
+
+bool Simulation::nearestNative(Entity e, Vec2 from, int r, Vec2& out) {
+    int sp = reg.get<Body>(e).species;
+    int cx = static_cast<int>(std::floor(from.x)), cy = static_cast<int>(std::floor(from.y));
+    for (int rad = 1; rad <= r; ++rad)
+        for (int dy = -rad; dy <= rad; ++dy)
+            for (int dx = -rad; dx <= rad; ++dx) {
+                if (std::max(std::abs(dx), std::abs(dy)) != rad) continue;   // chỉ duyệt viền vòng thứ rad
+                if (habitable(sp, cx + dx, cy + dy)) { out = wrapPos({cx + dx + 0.5f, cy + dy + 0.5f}); return true; }
+            }
+    return false;
+}
+
 int Simulation::foodAt(int sp, int x, int y) const {
     if (!habitable(sp, x, y)) return 0;
     if (species[sp].habitat == Habitat::Cave) return world.under(x, y).fungus;
@@ -254,6 +299,20 @@ void Simulation::metabolism() {
         b.fatigue = std::min(b.fatigue, 1.0f);
         if (b.hunger >= 1.0f) { b.hunger = 1.0f; b.hp -= 0.4f; if (b.hp <= 0) { kill(e, 1); continue; } }
         else if (b.hunger < 0.6f && b.hp < b.maxHp) b.hp = std::min(b.maxHp, b.hp + 0.03f);
+        // Hơi thở: ở ngoài môi trường sống thì cạn dần (nhanh/chậm tuỳ sức chịu đựng), về lại thì hồi trong ~3 giây
+        {
+            float endu = endurance(e, static_cast<int>(std::floor(tr.pos.x)), static_cast<int>(std::floor(tr.pos.y)));
+            if (endu >= kInfinite) b.breathUsed = static_cast<uint16_t>(std::max(0, b.breathUsed - kBreathMax / 60));
+            else {
+                int inc = endu > 0 ? static_cast<int>(kBreathMax / (endu * 20.0f)) + 1 : kBreathMax;
+                b.breathUsed = static_cast<uint16_t>(std::min(kBreathMax, b.breathUsed + inc));
+                if (b.breathUsed >= kBreathMax) {   // ngạt / đuối nước: ~8 giây là chết
+                    b.hp -= b.maxHp * 0.006f;
+                    b.sleeping = false;
+                    if (b.hp <= 0) { kill(e, 3); continue; }
+                }
+            }
+        }
         // Nhiệt độ THẬT (°C) từ lớp vật chất: lạnh, nóng, bỏng lửa, khí độc
         if ((b.ageTicks + entityIndex(e)) % 10 == 0) {
             int x = static_cast<int>(tr.pos.x), y = static_cast<int>(tr.pos.y);
@@ -287,7 +346,7 @@ void Simulation::metabolism() {
         // Ngoại lực (nổ, bị đạn bắn trúng) đẩy cơ thể đi, ma sát làm tắt dần
         if (tr.push.len2() > 1e-4f) {
             Vec2 np = tr.pos + tr.push;
-            if (habitable(b.species, static_cast<int>(std::floor(np.x)), static_cast<int>(np.y))) tr.pos = wrapPos(np);
+            if (endurance(e, static_cast<int>(std::floor(np.x)), static_cast<int>(std::floor(np.y))) > 0) tr.pos = wrapPos(np);
             else tr.push = Vec2{};
             tr.push = tr.push * 0.8f;
         }

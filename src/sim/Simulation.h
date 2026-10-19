@@ -74,6 +74,16 @@ public:
     // ---- Môi trường sống theo loài (cạn / nước / trời / hang) ----
     // Loài có thể ở / đi qua ô (x, y) không — dùng cho di chuyển, sinh sản, thả sinh vật.
     bool habitable(int species, int x, int y) const;
+    // MỌI sinh vật đều vào được môi trường khác, chỉ khác nhau ở thời gian chịu được:
+    // số giây cá thể chịu được ở ô (x, y) — kInfinite nếu là môi trường sống của nó, 0 nếu không thể vào (dung nham, vách núi).
+    // Thú trên cạn: lội nước nông lâu, bơi nước sâu 25–175 giây tuỳ gen bơi lội (có bè/thuyền thì không giới hạn);
+    // cá: mắc cạn vài giây. Hết hơi → ngạt / đuối nước (xem metabolism).
+    static constexpr float kInfinite = 1e9f;
+    float endurance(Entity e, int x, int y);
+    // Hệ số tốc độ khi ở ô (x, y): lội / bơi chậm, cá trên cạn chỉ quẫy được từng chút
+    float envSpeed(Entity e, int x, int y);
+    // Ô gần nhất (bán kính ≤ r) thuộc môi trường sống của cá thể — để bơi vào bờ / nhảy về nước
+    bool nearestNative(Entity e, Vec2 from, int r, Vec2& out);
     // Thức ăn thực vật loài này ăn được tại ô: cỏ quả (trên cạn), tảo (dưới nước), nấm & côn trùng (trong hang).
     int foodAt(int species, int x, int y) const;
     void eatFoodAt(int species, int x, int y, int amount);

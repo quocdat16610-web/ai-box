@@ -81,16 +81,17 @@ int main() {
             int want = std::getenv("WB_FPV_SPECIES") ? std::atoi(std::getenv("WB_FPV_SPECIES")) : 0;
             wb::Entity pick = wb::NullEntity;
             for (wb::Entity e : app.sim->agents) if (app.sim->reg.get<wb::Body>(e).species == want) { pick = e; break; }
-            if (pick != wb::NullEntity && std::getenv("WB_FPV_WATER")) {   // thử bơi: đặt sinh vật vào ô nước nông gần nhất
+            if (pick != wb::NullEntity && std::getenv("WB_FPV_FOREIGN")) {   // thử: đặt sinh vật vào ô "môi trường lạ" gần nhất (thú → nước, cá → cạn)
                 wb::Transform& tr = app.sim->reg.get<wb::Transform>(pick);
                 float bd = 1e9f;
                 wb::Vec2 best = tr.pos;
                 for (int y = 0; y < app.sim->world.height(); ++y)
-                    for (int x = 0; x < app.sim->world.width(); ++x)
-                        if (app.sim->world.at(x, y).terrain == wb::Terrain::ShallowWater) {
-                            float d = wb::dist2(tr.pos, {x + 0.5f, y + 0.5f});
-                            if (d < bd) { bd = d; best = {x + 0.5f, y + 0.5f}; }
-                        }
+                    for (int x = 0; x < app.sim->world.width(); ++x) {
+                        float en = app.sim->endurance(pick, x, y);
+                        if (en <= 0 || en >= wb::Simulation::kInfinite) continue;
+                        float d = wb::dist2(tr.pos, {x + 0.5f, y + 0.5f});
+                        if (d < bd) { bd = d; best = {x + 0.5f, y + 0.5f}; }
+                    }
                 tr.pos = best;
             }
             if (pick != wb::NullEntity) {

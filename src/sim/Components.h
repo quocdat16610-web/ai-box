@@ -27,6 +27,8 @@ struct Transform {
     Vec2 push;         // vận tốc do ngoại lực (nổ, va chạm, bị đánh bật) — tắt dần do ma sát
 };
 
+constexpr int kBreathMax = 60000;
+
 struct Body {
     int species = 0;
     float hp = 50, maxHp = 50;
@@ -37,6 +39,9 @@ struct Body {
     float fatigue = 0.0f;  // 0 = tỉnh táo, 1 = kiệt sức
     float cold = 0.0f;     // mức lạnh (không chịu được khí hậu)
     bool female = false;
+    // Hơi thở / sức chịu đựng khi ở NGOÀI môi trường sống (thú trên cạn lặn/bơi ở nước sâu, cá mắc cạn...):
+    // 0 = đầy, kBreathMax = cạn → bắt đầu ngạt / đuối nước. (Nằm trong khoảng đệm sẵn có → sizeof(Body) không đổi.)
+    uint16_t breathUsed = 0;
     int pregnancyTicks = 0;      // >0: đang mang thai
     Entity pregnantBy = NullEntity;
     int reproCooldown = 0;

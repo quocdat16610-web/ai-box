@@ -394,6 +394,7 @@ void drawCreaturePanel(App& app, Rectangle r) {
     w.meter("Máu", b.hp / b.maxHp, Color{220, 70, 70, 255});
     w.meter("Đói", b.hunger, Color{230, 160, 60, 255});
     w.meter("Mệt", b.fatigue, Color{150, 150, 230, 255});
+    if (b.breathUsed > 0) w.meter("Hơi thở", 1.0f - b.breathUsed / static_cast<float>(kBreathMax), Color{110, 200, 240, 255});
     w.meter("Lạnh", b.cold, Color{120, 200, 255, 255});
     w.meter("Trí tuệ", m.intellect, SKYBLUE);
     w.gap();
@@ -828,8 +829,9 @@ void handleFpInput(App& app) {
             Brain::playerMove(sim, fp.who, dir);
             b.fatigue = std::min(1.0f, b.fatigue + dt * 0.004f * run);
         } else sim.reg.get<Transform>(fp.who).moving = false;
-        if (Brain::playerDrowning(sim, fp.who, dt) && GetTime() - fp.msgTime > 1.5) {
-            fp.msg = "Kiệt sức giữa nước sâu — đang đuối nước! Bơi vào bờ ngay";
+        if (sim.reg.get<Body>(fp.who).breathUsed >= kBreathMax * 0.75f && GetTime() - fp.msgTime > 1.5) {
+            bool fish = sim.species[sim.reg.get<Body>(fp.who).species].habitat == Habitat::Water;
+            fp.msg = fish ? "Sắp ngạt thở trên cạn — quay về nước ngay!" : "Sắp hết hơi — bơi vào bờ ngay kẻo đuối nước!";
             fp.msgTime = static_cast<float>(GetTime());
         }
     }
@@ -858,6 +860,7 @@ void drawFpHud(App& app) {
     w.meter("Máu", b.hp / b.maxHp, Color{220, 70, 70, 255});
     w.meter("Đói", b.hunger, Color{230, 160, 60, 255});
     w.meter("Mệt", b.fatigue, Color{150, 150, 230, 255});
+    if (b.breathUsed > 0) w.meter("Hơi thở", 1.0f - b.breathUsed / static_cast<float>(kBreathMax), Color{110, 200, 240, 255});
     if (fp.control) w.line(fmt("ĐANG ĐIỀU KHIỂN · mang: %d ăn, %d gỗ, %d đá, %d khác", inv.food, inv.wood, inv.stone, inv.matTotal()), Color{255, 220, 110, 255});
     else w.line(std::string("Đang nghĩ: \"") + m.thought + "\"", Color{255, 230, 150, 255});
     // ---- Bản đồ nhỏ ----

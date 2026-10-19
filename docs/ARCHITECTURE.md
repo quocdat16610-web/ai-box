@@ -556,6 +556,16 @@ Ba chế độ: mặt đất, dưới nước (đáy biển), trong hang (khối
 có vách đứng, ánh sáng tắt dần theo khoảng cách, nấm phát quang). Khi điều khiển, `Mind::possessed` tắt AI của cá thể; hành
 động của người chơi đi qua đúng luật của mô phỏng (sát thương, độ cứng vật liệu so với công cụ, môi trường sống...).
 
+### 15.4a Môi trường lạ & hơi thở (`Simulation::endurance/envSpeed/nearestNative`, `Body::breathUsed`)
+Môi trường sống (`habitable`) không còn là bức tường: mọi cá thể vào được ô "lạ" mà nó chịu được, chỉ khác nhau ở **số giây chịu
+đựng** — thú trên cạn: lội nước nông 300 + 600·bơi lội giây, bơi nước sâu 25 + 150·bơi lội giây (người ~70 s, gấu ~107 s), có
+bè/thuyền thì như trên cạn; cá trên cạn 6 s. Ở ngoài môi trường sống thì `breathUsed` tăng theo tỉ lệ đó (về lại thì hồi trong ~3 s);
+cạn hơi → mất 0.6% máu tối đa mỗi tick (~8 s là chết ngạt / đuối). Tốc độ nhân `envSpeed` (lội 0.55–0.95, bơi 0.25–0.85, cá quẫy 0.15).
+AI: đã ở trong môi trường lạ thì đi tiếp được, hụt quá 35% hơi thì đổi đích về ô quen thuộc gần nhất; còn **tự nguyện** bước vào
+thì chỉ loài bơi giỏi (gen > 0.65) — đo trên 12 seed sói / 6 seed người, cho AI tự lội tự do làm bầy tản mát, giảm tỉ lệ lập bộ
+tộc (20/22 so với 22/22). Người chơi thì đi đâu cũng được. `breathUsed` (uint16) nằm trong khoảng đệm sẵn có của `Body` nên
+`sizeof(Body)` không đổi — tệp lưu cũ vẫn tải được.
+
 ### 15.4b Lưu / tải (`SaveLoad.cpp`)
 Một lớp `Archive` với hàm `io()` dùng chung cho cả ghi và đọc (không thể lệch thứ tự trường). `SaveAccess` là `friend` của các
 lớp có trạng thái riêng (World, MatterGrid, MaterialRegistry, Registry, Simulation...). Phần đầu tệp (`SaveInfo`) đọc riêng để

@@ -107,7 +107,11 @@ void setLight(FirstPerson& fp, float amount) {
 
 int modeOf(Simulation& sim, Entity e) {
     Habitat h = sim.species[sim.reg.get<Body>(e).species].habitat;
-    return h == Habitat::Water ? 1 : (h == Habitat::Cave ? 2 : 0);
+    if (h == Habitat::Water) {   // cá mắc cạn: nhìn thấy thế giới trên mặt đất
+        const Vec2 p = sim.reg.get<Transform>(e).pos;
+        return sim.world.isWater(static_cast<int>(std::floor(p.x)), static_cast<int>(std::floor(p.y))) ? 1 : 0;
+    }
+    return h == Habitat::Cave ? 2 : 0;
 }
 
 // Độ cao (đơn vị 3D; 1 ô = 1 đơn vị) của ô theo "thế giới" đang nhìn
@@ -763,7 +767,7 @@ void fpRender(FirstPerson& fp, Simulation& sim, Renderer& r, float time) {
     float eye;
     switch (sd.plan) {
     case BodyPlan::Bird: eye = std::max(ground, 0.0f) + 3.5f + std::sin(time * 0.8f) * 0.15f; break;
-    case BodyPlan::Fish: eye = std::min(-0.4f, ground + 0.5f); break;
+    case BodyPlan::Fish: eye = w.isWater(tx, ty) ? std::min(-0.4f, ground + 0.5f) : ground + 0.2f; break;   // mắc cạn: sát mặt đất
     case BodyPlan::Bat: eye = 0.9f + std::sin(time * 3) * 0.05f; break;
     case BodyPlan::Spider: case BodyPlan::Reptile: eye = ground + 0.25f * sd.size + 0.1f; break;
     case BodyPlan::Humanoid: eye = ground + 0.8f * std::max(0.6f, sd.size) + 0.05f; break;
@@ -931,7 +935,9 @@ void fpRender(FirstPerson& fp, Simulation& sim, Renderer& r, float time) {
         Vec2 lo = wdiff(st.pos, origin);
         float gy = groundAt(w, st.pos.x, st.pos.y, mode);
         if (od.plan == BodyPlan::Bird) gy = std::max(gy, 0.0f) + 2.6f + 0.4f * std::sin(time * 0.9f + entityIndex(o));
-        else if (od.plan == BodyPlan::Fish) gy = std::min(-0.35f, gy + 0.3f + 0.1f * std::sin(time * 2 + entityIndex(o)));
+        else if (od.plan == BodyPlan::Fish)
+            gy = w.isWater(static_cast<int>(std::floor(st.pos.x)), static_cast<int>(std::floor(st.pos.y))) ? std::min(-0.35f, gy + 0.3f + 0.1f * std::sin(time * 2 + entityIndex(o)))
+                                                                                                               : gy + 0.08f + std::fabs(std::sin(time * 9 + entityIndex(o))) * 0.12f;   // cá mắc cạn: giãy đành đạch
         else if (od.plan == BodyPlan::Bat) gy = 0.7f + 0.25f * std::sin(time * 3 + entityIndex(o));
         else if (w.isWater(static_cast<int>(st.pos.x), static_cast<int>(st.pos.y))) gy = mode == 1 ? -0.1f : -0.18f;   // bơi: chìm nửa người
         drawCreature3D(sim, o, lo.x, gy, lo.y, st.yaw, st.phase, speed, time);

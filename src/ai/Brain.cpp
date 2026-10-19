@@ -41,26 +41,38 @@ bool moveTo(Simulation& sim, Entity e, Transform& tr, Body& body, Mind& m, Vec2 
     if (L <= arrive) { tr.stuck = 0; tr.moving = false; return true; }
     tr.moving = true;
     tr.target = tgt;
+    // Đang ở ngoài môi trường sống (bơi giữa nước sâu, cá mắc cạn...) và đã hụt hơi → bỏ việc, về chỗ quen thuộc gần nhất
+    float curEndu = sim.endurance(e, tileX(tr.pos), tileY(tr.pos));
+    bool native = curEndu >= Simulation::kInfinite;
+    if (!native && body.breathUsed > kBreathMax * 0.35f) {
+        Vec2 safe;
+        if (sim.nearestNative(e, tr.pos, 14, safe)) {
+            tgt = safe;
+            d = wdiff(tgt, tr.pos);
+            L = std::max(1e-4f, d.len());
+            tr.target = tgt;
+        }
+    }
     float cost = sim.world.moveCost(tileX(tr.pos), tileY(tr.pos));
-    float spd = std::min(L, body.speed / std::max(0.5f, cost));
+    float spd = std::min(L, body.speed / std::max(0.5f, cost)) * sim.envSpeed(e, tileX(tr.pos), tileY(tr.pos));
     Vec2 dir = d * (1.0f / L);
     static const float angles[] = {0.f, 0.6f, -0.6f, 1.2f, -1.2f, 1.9f, -1.9f};
     // Hướng lệch ưu tiên "nhớ" theo entity để không bị lắc qua lại
     float side = (entityIndex(e) & 1) ? 1.f : -1.f;
-    // Vượt nước: bơi giỏi (gen) qua được nước nông; có bè/thuyền nổi đủ sức chở thì qua mọi vùng nước
-    bool swimmer = sim.reg.get<GenomeC>(e).genome[Gene::Swimming] > 0.65f;
-    bool raft = heldValue(sim, e, Purpose::Float) >= 60.0f;
     const Habitat hab = sim.species[body.species].habitat;
-    // Đang ở dưới nước (vd. người chơi vừa bơi ra rồi trả lại cho AI) → được bơi tiếp để vào bờ, không kẹt giữa biển
-    bool wet = hab == Habitat::Land && sim.world.isWater(tileX(tr.pos), tileY(tr.pos));
+    const float swimGene = sim.reg.get<GenomeC>(e).genome[Gene::Swimming];
     auto passable = [&](int x, int y) {
         // Né chỗ quá nóng (đám cháy, dung nham, lò) — trừ khi đó chính là đích đến (loài trong hang không bị ảnh hưởng)
         if (hab != Habitat::Cave && sim.world.inBounds(x, y) && sim.world.matter.temp(x, y) > 120 &&
             sim.world.matter.temp(x, y) >= sim.world.matter.temp(tileX(tr.pos), tileY(tr.pos)))
             return false;   // chỉ cho phép đi về phía mát hơn (thoát khỏi đám cháy)
-        if (sim.habitable(body.species, x, y)) return true;
-        if (hab != Habitat::Land || !sim.world.isWater(x, y)) return false;
-        return raft || wet || (swimmer && sim.world.at(x, y).terrain == Terrain::ShallowWater);
+        float en = sim.endurance(e, x, y);
+        if (en >= Simulation::kInfinite) return true;
+        if (en <= 0) return false;
+        // Đã ở trong môi trường lạ rồi → đi tiếp được (để bơi vào bờ). Còn TỰ NGUYỆN bước vào thì chỉ loài bơi giỏi
+        // (gen bơi lội > 0.65) khi đang sung sức → cá không tự nhảy lên bờ, người & sói không liều lội/vượt biển
+        // (vẫn có động lực làm cầu, làm thuyền). Người chơi điều khiển thì đi đâu cũng được (playerMove).
+        return !native || (swimGene > 0.65f && en >= 60.0f && body.breathUsed < kBreathMax / 10);
     };
     for (float a0 : angles) {
         float a = a0 * side;
@@ -1705,25 +1717,10 @@ void Brain::act(Simulation& sim, Entity e) {
 // ===========================================================================
 bool Brain::playerMove(Simulation& sim, Entity e, Vec2 dir) {
     Transform& tr = sim.reg.get<Transform>(e);
-    Body& body = sim.reg.get<Body>(e);
-    const Habitat hab = sim.species[body.species].habitat;
-    float swim = sim.reg.get<GenomeC>(e).genome[Gene::Swimming];
-    bool raft = heldValue(sim, e, Purpose::Float) >= 60.0f;
-    // Sinh vật trên cạn vẫn xuống nước được: lội chỗ nông, bơi chỗ sâu (chậm & mệt, tuỳ gen bơi lội);
-    // có bè/thuyền thì đi nhanh như trên cạn.
-    auto ok = [&](Vec2 p) {
-        int x = static_cast<int>(std::floor(p.x)), y = static_cast<int>(std::floor(p.y));
-        if (sim.habitable(body.species, x, y)) return true;
-        return hab == Habitat::Land && sim.world.isWater(x, y);
-    };
-    int cx = static_cast<int>(std::floor(tr.pos.x)), cy = static_cast<int>(std::floor(tr.pos.y));
-    if (hab == Habitat::Land && sim.world.inBounds(cx, cy) && sim.world.isWater(cx, cy) && !raft) {
-        bool deep = sim.world.at(cx, cy).terrain == Terrain::DeepWater;
-        float k = deep ? 0.25f + 0.6f * swim : 0.55f + 0.4f * swim;
-        dir = dir * k;
-        // bơi tốn sức: kiệt sức ở chỗ sâu thì bắt đầu đuối nước (xem handleFpInput)
-        body.fatigue = std::min(1.0f, body.fatigue + dir.len() * (deep ? 0.05f : 0.012f) * (1.3f - swim));
-    }
+    // Người chơi đi được vào MỌI môi trường chịu được (bơi ra biển, cho cá nhảy lên bờ...): hơi thở cạn dần
+    // theo sức chịu đựng, hết hơi thì ngạt / đuối nước (Simulation::metabolism).
+    auto ok = [&](Vec2 p) { return sim.endurance(e, static_cast<int>(std::floor(p.x)), static_cast<int>(std::floor(p.y))) > 0; };
+    dir = dir * sim.envSpeed(e, static_cast<int>(std::floor(tr.pos.x)), static_cast<int>(std::floor(tr.pos.y)));
     Vec2 np = tr.pos + dir;
     // trượt dọc vật cản: thử đi thẳng, rồi từng trục
     if (ok(np)) tr.pos = wrapPos(np);
@@ -1732,19 +1729,6 @@ bool Brain::playerMove(Simulation& sim, Entity e, Vec2 dir) {
     else return false;
     tr.moving = dir.len2() > 1e-6f;
     tr.target = tr.pos + dir * 4.0f;
-    return true;
-}
-
-bool Brain::playerDrowning(Simulation& sim, Entity e, float dt) {
-    Body& body = sim.reg.get<Body>(e);
-    if (sim.species[body.species].habitat != Habitat::Land || heldValue(sim, e, Purpose::Float) >= 60.0f) return false;
-    const Transform& tr = sim.reg.get<Transform>(e);
-    int x = static_cast<int>(std::floor(tr.pos.x)), y = static_cast<int>(std::floor(tr.pos.y));
-    if (!sim.world.inBounds(x, y) || sim.world.at(x, y).terrain != Terrain::DeepWater) return false;
-    body.fatigue = std::min(1.0f, body.fatigue + dt * 0.01f);   // đứng nước cũng mỏi
-    if (body.fatigue < 0.98f) return false;
-    body.hp -= dt * body.maxHp * 0.12f;   // ~8 giây kiệt sức dưới nước sâu là chết đuối
-    if (body.hp <= 0) sim.kill(e, 3);
     return true;
 }
 

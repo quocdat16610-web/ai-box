@@ -42,8 +42,6 @@ public:
     static std::string playerAction(Simulation& sim, Entity e, PlayerAct act, Vec2 facing);
     // Di chuyển sinh vật bị điều khiển một bước theo hướng `dir` (đã nhân tốc độ), tôn trọng môi trường sống.
     static bool playerMove(Simulation& sim, Entity e, Vec2 dir);
-    // Kiệt sức giữa nước sâu (không có bè) → mất máu dần, có thể chết đuối. Trả về true nếu đang đuối nước.
-    static bool playerDrowning(Simulation& sim, Entity e, float dt);
 };
 
 } // namespace wb
