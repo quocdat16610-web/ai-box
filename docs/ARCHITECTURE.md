@@ -513,3 +513,54 @@ mỗi lần push (mục *Artifacts*). APK release ký bằng khoá debug để c
 * **Khái niệm**: thêm vào `Concept` + nguồn trải nghiệm (`experience(...)`) + hình dạng nó mở khoá (`conceivable`).
 * **Hành động AI**: `ActionId` + dòng trong `kActions` + `case` trong `exec` — GOAP tự ghép vào kế hoạch.
 * **Loài**: `SpeciesRegistry::initDefaults`.
+
+---
+
+## 15. Hành tinh hình cầu, lòng đất, góc nhìn thứ nhất, phòng thí nghiệm gen
+
+### 15.1 Hành tinh hình cầu (`World::generate`, `WrapSpace`)
+* Bản đồ = phép chiếu trụ đẳng chữ nhật của một quả cầu: x = kinh độ (**quấn vòng**), y = vĩ độ (mép trên/dưới là hai cực).
+  Chiều rộng = 2 × chiều cao. `World::at`, `MatterGrid::idx`, `SpatialGrid::query`, `dist2/wdiff` đều quấn theo x, nên
+  sinh vật, lửa, nước, khí, mũi tên đi qua "đường đổi ngày" liền mạch; `moveTo` chọn đường ngắn nhất quanh hành tinh.
+* Địa hình lấy mẫu **nhiễu 3D trên mặt cầu** (không có đường nối), uốn toạ độ bằng nhiễu để bờ biển tự nhiên, dãy núi dùng
+  nhiễu "gờ". Kiểu hành tinh quyết định số "mảng lục địa" (khoảng cách góc trên cầu), kích thước, tần số nhiễu và tỉ lệ đất
+  liền; mực nước biển đặt theo **phân vị** để luôn đúng tỉ lệ (Siêu lục địa ~33%, Nhiều châu lục ~36%, Quần đảo ~20%,
+  Đại dương ~7%, Khô ~80%).
+* Quả địa cầu 3D (`Renderer::drawGlobe`): lưới cầu UV tự dựng có (u, v) = (x/W, y/H) → dán thẳng texture pixel art của bản đồ
+  (cập nhật trực tiếp), màu đỉnh tính ánh sáng ngày/đêm, quầng khí quyển, sao; chạm mặt cầu → tia cắt cầu → kinh/vĩ độ → hạ xuống.
+
+### 15.2 Lòng đất (`UnderTile`, `World::generateUnderground`, `World::digMine`)
+Một tầng ngầm dưới mọi ô: đá, hang (mặt đẳng trị của nhiễu → đường hầm ngoằn ngoèo + hang lớn), hồ ngầm, magma (gần núi lửa),
+mạch quặng (theo "tỉnh khoáng sản"), nấm hang (mọc lại). Khai thác đá/quặng trên đồi núi → `digMine` biến đá thành đường hầm và
+**đào tiếp về phía mạch quặng gần nhất**, đưa quặng lên cửa hầm (công trình *Hầm mỏ*) → mỏ là nguồn quặng lâu dài.
+
+### 15.3 Môi trường sống & đa dạng loài (`Habitat`, `Simulation::habitable/foodAt`)
+Mỗi loài có môi trường sống (Cạn, Nước, Trời, Hang, Lưỡng cư) và hình dáng (`BodyPlan`). Một hàm trung tâm `habitable()`
+quyết định di chuyển, sinh sản, thả sinh vật; `foodAt()` chọn thức ăn (cỏ quả / tảo / nấm & côn trùng). Sinh vật ở **tầng
+khác** (hang ↔ mặt đất) không thấy nhau; `canHunt` xét cả môi trường (cá mập chỉ săn dưới nước, đại bàng bắt được cá...).
+Sức chứa môi trường theo loài (`capShare`) giữ hệ sinh thái cân bằng và chừa chỗ cho các loài có trí khôn.
+
+### 15.4 Góc nhìn thứ nhất (`FirstPerson.cpp`) & nhập vai (`Brain::playerMove/playerAction`)
+Lưới địa hình 57×57 ô quanh sinh vật dựng lại khi nó sang ô mới; texture lấy từ bản đồ 2D (nhà, ruộng, lãnh thổ hiện đúng chỗ);
+cây, công trình, sinh vật khác là khối hộp theo hình dáng cơ thể. Ba chế độ: mặt đất, dưới nước (đáy biển), trong hang (khối đá
+có vách đứng, ánh sáng tắt dần theo khoảng cách, nấm phát quang). Khi điều khiển, `Mind::possessed` tắt AI của cá thể; hành
+động của người chơi đi qua đúng luật của mô phỏng (sát thương, độ cứng vật liệu so với công cụ, môi trường sống...).
+
+### 15.5 Phòng thí nghiệm gen (`GeneLab`, `CustomGene`, `addCustomGene`)
+Bản nháp loài = bản sao loài gốc; có thể lai 50/50 hoặc lấy từng phần (trí tuệ & tay, hình dáng, môi trường, thức ăn, màu, sức
+mạnh, gen tự tạo) từ loài cho gen, chỉnh 13 gen, chỉnh ngoại hình & sinh thái, và **tạo gen mới** gồm tên + hiệu ứng (14 loại) +
+cường độ. Hiệu ứng lên bộ gen/môi trường (não bộ, lông dày, mang cá, đôi cánh...) áp dụng một lần khi cấy; hiệu ứng lên cơ thể
+(sinh lực, cơ bắp, nọc độc, vảy giáp...) biểu hiện mỗi khi sinh ra cá thể; quang hợp làm đói chậm. Loài mới (`engineered`,
+`parent`, `donor`) di truyền gen cho mọi hậu duệ; khi phân hoá loài tự nhiên (`speciation`) còn có 40% khả năng **đột biến ra
+gen mới** hợp với môi trường (lạnh → lông dày, ven nước → mang cá, hang → phát quang) → cây sự sống ngày càng đa dạng.
+Kiểm thử: `worldbox_sim --genelab-test` (người × đại bàng + cánh + nọc độc → bay được qua biển, sinh sôi 10 → 26 trong 3 năm).
+
+### 15.6 Xoay màn hình Android (`cmake/PatchRaylibAndroid.cmake`)
+raylib 5.5 cố định kích thước bộ đệm khung hình lúc khởi động nên khi xoay máy hình bị kéo giãn. Bản vá (áp dụng lúc FetchContent)
+theo dõi kích thước thật của cửa sổ, tạo lại EGL surface và cập nhật kích thước/viewport nội bộ; game tự tính lại tỉ lệ giao diện,
+tâm camera và bố cục menu (2 cột khi màn hình ngang). Build APK sẽ dừng nếu bản vá chưa được áp dụng.
+
+### 15.7 Sửa lỗi lập kế hoạch GOAP
+A* trước đây mở rộng cả các hành động rẻ nhưng vô ích (ăn, bỏ chạy...) nên tràn ngân sách 300 nút trước khi tìm ra chuỗi dài như
+"gom vật liệu → xây". Nay có bước **cắt tỉa theo liên quan** (hồi quy từ mục tiêu: chỉ mở rộng hành động có hiệu ứng góp vào mục
+tiêu hoặc điều kiện của hành động liên quan) → việc xây nhà không còn thất bại hàng loạt; 6/6 seed người nguyên thuỷ lập làng trong 40 năm.

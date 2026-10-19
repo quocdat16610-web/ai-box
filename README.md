@@ -15,6 +15,20 @@ và quan sát chúng **tự suy nghĩ, học hỏi, tiến hoá** thành bộ t�
 
 ## Tính năng
 
+* **Hành tinh hình cầu**: bản đồ quấn vòng đông–tây như Trái Đất (đi mãi về phía đông sẽ vòng về phía tây), hai cực
+  có chỏm băng; **thu nhỏ hết cỡ → quả địa cầu 3D** xoay được (ngày/đêm, khí quyển, nhãn quốc gia), chạm để hạ xuống.
+  6 kiểu hành tinh sinh ngẫu nhiên: siêu lục địa, nhiều châu lục, quần đảo, hành tinh đại dương, hành tinh khô, hoặc
+  để máy bốc ngẫu nhiên.
+* **Lòng đất**: hang động ngoằn ngoèo, sông hồ ngầm, túi magma, mạch quặng, nấm phát quang; dơi & nhện sống trong hang;
+  sinh vật có tay **đào hầm mỏ** men theo mạch quặng. Nút **Lòng đất** để nhìn thẳng xuống hang & hầm mỏ.
+* **Góc nhìn thứ nhất**: chọn bất kỳ sinh vật nào → **Nhìn qua mắt** (cảnh 3D: rừng, làng, đồng loại, con mồi; cá thấy
+  đáy biển; dơi thấy vách hang) → **Điều khiển** để nhập vai: cần ảo/WASD đi, kéo để nhìn, tấn công, ăn, thu thập, dựng lều.
+* **Phòng thí nghiệm gen** (mục Sự sống): cấy ghép gen giữa hai loài, chỉnh từng gen, tạo **gen mới tuỳ ý** (cánh, mang cá,
+  nọc độc, vảy giáp, quang hợp, phát quang…), chỉnh màu, kích thước, hình dáng, môi trường sống → tạo loài mới và thả ra.
+  Loài nhân tạo vẫn tự tiến hoá; khi phân hoá loài trong tự nhiên cũng có thể **đột biến ra gen mới**.
+* **21 loài**: 4 chủng tộc, quái vật, và muông thú trên cạn (sói, hươu, thỏ, gấu, lợn rừng, voi ma mút, cáo, khỉ), dưới
+  nước (cá, cá mập), lưỡng cư (cá sấu), trên trời (đại bàng, chim sẻ), trong hang (dơi, nhện hang).
+
 * **Thế giới**: địa hình sinh thủ tục (biển, cát, đồng cỏ, rừng, rừng rậm, sa mạc, thảo nguyên, đồi, núi, tuyết,
   lãnh nguyên, đầm lầy, núi lửa) + địa hình sinh ra từ vật lý (băng, bazan, thuỷ tinh); mỏ đá/quặng nhiều loại
   (đá lửa, đá vôi, đất sét, đồng, thiếc, sắt, vàng, lưu huỳnh, diêm tiêu, 2 khoáng chất lạ theo seed); mùa, mưa theo
@@ -60,6 +74,8 @@ Chạy mô phỏng không đồ hoạ (in biên niên sử):
 ./build/worldbox_sim --scenario humans --years 80      # người nguyên thuỷ → làng → quốc gia
 ./build/worldbox_sim --scenario twins --years 120 --seed 21   # 2 bộ tộc nhân bản, 2 môi trường → 2 con đường
 ./build/worldbox_sim --chemtest                        # kiểm thử hoá học xác định
+./build/worldbox_sim --genelab-test                    # kiểm thử phòng thí nghiệm gen
+./build/worldbox_sim --world archipelago --map dao.ppm --years 0   # xuất bản đồ một hành tinh quần đảo
 ./build/worldbox_sim --scenario sandbox --years 50 --seed 42
 ctest --test-dir build --output-on-failure             # kiểm thử kịch bản
 ```
@@ -96,9 +112,10 @@ src/phys/      Vật liệu, lưới vật chất (nhiệt/lỏng/khí), quy lu�
 src/ai/        Gen, tính cách, trí nhớ, tập quán, GOAP, Brain, công nghệ mở (Invention/Creativity)
 src/civ/       Nhóm xã hội, ngôn ngữ thủ tục, SocietySystem (văn minh, ngoại giao, loài mới)
 src/sim/       Simulation (vòng lặp tick), loài, quyền năng Thần, kịch bản, biên niên sử
-src/app/       Game raylib: renderer pixel art, UI cảm ứng, font tiếng Việt
+src/app/       Game raylib: renderer pixel art, quả địa cầu 3D, góc nhìn thứ nhất, phòng gen, UI cảm ứng, font tiếng Việt
 src/headless/  Trình chạy không đồ hoạ (test/CI/benchmark)
 android/       Dự án Gradle (NativeActivity, không có mã Java)
+cmake/         Bản vá raylib cho xoay màn hình Android
 docs/          Tài liệu kiến trúc chi tiết
 ```
 
