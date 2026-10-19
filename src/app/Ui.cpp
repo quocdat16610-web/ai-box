@@ -828,6 +828,10 @@ void handleFpInput(App& app) {
             Brain::playerMove(sim, fp.who, dir);
             b.fatigue = std::min(1.0f, b.fatigue + dt * 0.004f * run);
         } else sim.reg.get<Transform>(fp.who).moving = false;
+        if (Brain::playerDrowning(sim, fp.who, dt) && GetTime() - fp.msgTime > 1.5) {
+            fp.msg = "Kiệt sức giữa nước sâu — đang đuối nước! Bơi vào bờ ngay";
+            fp.msgTime = static_cast<float>(GetTime());
+        }
     }
     if (IsKeyPressed(KEY_TAB) || IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_BACK)) fpExit(fp, sim);
 }

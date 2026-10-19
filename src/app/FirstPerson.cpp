@@ -770,6 +770,8 @@ void fpRender(FirstPerson& fp, Simulation& sim, Renderer& r, float time) {
     case BodyPlan::Giant: eye = ground + 1.6f; break;
     default: eye = ground + 0.45f * sd.size + 0.2f; break;
     }
+    // Sinh vật trên cạn đang lội / bơi: đầu nhô khỏi mặt nước, nhấp nhô theo sóng
+    if (mode == 0 && sd.habitat == Habitat::Land && w.isWater(tx, ty)) eye = std::max(eye, 0.28f + std::sin(time * 1.8f) * 0.03f);
     if (moving && sd.plan != BodyPlan::Bird && sd.plan != BodyPlan::Fish && sd.plan != BodyPlan::Bat) eye += std::fabs(std::sin(fp.walkPhase)) * 0.035f;
     Camera3D cam{};
     cam.position = {lp.x, eye, lp.y};

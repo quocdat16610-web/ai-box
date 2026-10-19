@@ -51,6 +51,8 @@ bool moveTo(Simulation& sim, Entity e, Transform& tr, Body& body, Mind& m, Vec2 
     bool swimmer = sim.reg.get<GenomeC>(e).genome[Gene::Swimming] > 0.65f;
     bool raft = heldValue(sim, e, Purpose::Float) >= 60.0f;
     const Habitat hab = sim.species[body.species].habitat;
+    // Đang ở dưới nước (vd. người chơi vừa bơi ra rồi trả lại cho AI) → được bơi tiếp để vào bờ, không kẹt giữa biển
+    bool wet = hab == Habitat::Land && sim.world.isWater(tileX(tr.pos), tileY(tr.pos));
     auto passable = [&](int x, int y) {
         // Né chỗ quá nóng (đám cháy, dung nham, lò) — trừ khi đó chính là đích đến (loài trong hang không bị ảnh hưởng)
         if (hab != Habitat::Cave && sim.world.inBounds(x, y) && sim.world.matter.temp(x, y) > 120 &&
@@ -58,7 +60,7 @@ bool moveTo(Simulation& sim, Entity e, Transform& tr, Body& body, Mind& m, Vec2 
             return false;   // chỉ cho phép đi về phía mát hơn (thoát khỏi đám cháy)
         if (sim.habitable(body.species, x, y)) return true;
         if (hab != Habitat::Land || !sim.world.isWater(x, y)) return false;
-        return raft || (swimmer && sim.world.at(x, y).terrain == Terrain::ShallowWater);
+        return raft || wet || (swimmer && sim.world.at(x, y).terrain == Terrain::ShallowWater);
     };
     for (float a0 : angles) {
         float a = a0 * side;
@@ -1703,16 +1705,25 @@ void Brain::act(Simulation& sim, Entity e) {
 // ===========================================================================
 bool Brain::playerMove(Simulation& sim, Entity e, Vec2 dir) {
     Transform& tr = sim.reg.get<Transform>(e);
-    const Body& body = sim.reg.get<Body>(e);
+    Body& body = sim.reg.get<Body>(e);
     const Habitat hab = sim.species[body.species].habitat;
-    bool swimmer = sim.reg.get<GenomeC>(e).genome[Gene::Swimming] > 0.65f;
+    float swim = sim.reg.get<GenomeC>(e).genome[Gene::Swimming];
     bool raft = heldValue(sim, e, Purpose::Float) >= 60.0f;
+    // Sinh vật trên cạn vẫn xuống nước được: lội chỗ nông, bơi chỗ sâu (chậm & mệt, tuỳ gen bơi lội);
+    // có bè/thuyền thì đi nhanh như trên cạn.
     auto ok = [&](Vec2 p) {
         int x = static_cast<int>(std::floor(p.x)), y = static_cast<int>(std::floor(p.y));
         if (sim.habitable(body.species, x, y)) return true;
-        if (hab != Habitat::Land || !sim.world.isWater(x, y)) return false;
-        return raft || (swimmer && sim.world.at(x, y).terrain == Terrain::ShallowWater);
+        return hab == Habitat::Land && sim.world.isWater(x, y);
     };
+    int cx = static_cast<int>(std::floor(tr.pos.x)), cy = static_cast<int>(std::floor(tr.pos.y));
+    if (hab == Habitat::Land && sim.world.inBounds(cx, cy) && sim.world.isWater(cx, cy) && !raft) {
+        bool deep = sim.world.at(cx, cy).terrain == Terrain::DeepWater;
+        float k = deep ? 0.25f + 0.6f * swim : 0.55f + 0.4f * swim;
+        dir = dir * k;
+        // bơi tốn sức: kiệt sức ở chỗ sâu thì bắt đầu đuối nước (xem handleFpInput)
+        body.fatigue = std::min(1.0f, body.fatigue + dir.len() * (deep ? 0.05f : 0.012f) * (1.3f - swim));
+    }
     Vec2 np = tr.pos + dir;
     // trượt dọc vật cản: thử đi thẳng, rồi từng trục
     if (ok(np)) tr.pos = wrapPos(np);
@@ -1721,6 +1732,19 @@ bool Brain::playerMove(Simulation& sim, Entity e, Vec2 dir) {
     else return false;
     tr.moving = dir.len2() > 1e-6f;
     tr.target = tr.pos + dir * 4.0f;
+    return true;
+}
+
+bool Brain::playerDrowning(Simulation& sim, Entity e, float dt) {
+    Body& body = sim.reg.get<Body>(e);
+    if (sim.species[body.species].habitat != Habitat::Land || heldValue(sim, e, Purpose::Float) >= 60.0f) return false;
+    const Transform& tr = sim.reg.get<Transform>(e);
+    int x = static_cast<int>(std::floor(tr.pos.x)), y = static_cast<int>(std::floor(tr.pos.y));
+    if (!sim.world.inBounds(x, y) || sim.world.at(x, y).terrain != Terrain::DeepWater) return false;
+    body.fatigue = std::min(1.0f, body.fatigue + dt * 0.01f);   // đứng nước cũng mỏi
+    if (body.fatigue < 0.98f) return false;
+    body.hp -= dt * body.maxHp * 0.12f;   // ~8 giây kiệt sức dưới nước sâu là chết đuối
+    if (body.hp <= 0) sim.kill(e, 3);
     return true;
 }
 

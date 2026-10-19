@@ -23,7 +23,8 @@ và quan sát chúng **tự suy nghĩ, học hỏi, tiến hoá** thành bộ t�
   sinh vật có tay **đào hầm mỏ** men theo mạch quặng. Nút **Lòng đất** để nhìn thẳng xuống hang & hầm mỏ.
 * **Góc nhìn thứ nhất**: chọn bất kỳ sinh vật nào → **Nhìn qua mắt** (cảnh 3D low-poly có ánh nắng, sương mù xa, mây trôi,
   cỏ & cây đung đưa, mặt nước gợn sóng; cá thấy đáy biển; dơi thấy vách hang) → **Điều khiển** để nhập vai: cần ảo/WASD đi,
-  kéo để nhìn, tấn công, ăn, thu thập, dựng lều. Sinh vật có **hoạt ảnh**: chân bước, tay vung, đuôi vẫy, chim vỗ cánh, cá quẫy,
+  kéo để nhìn, tấn công, ăn, thu thập, dựng lều. Sinh vật trên cạn **lội và bơi** được (chậm, tốn sức theo gen bơi lội;
+  kiệt sức giữa nước sâu thì đuối nước; có bè/thuyền thì đi như trên cạn). Sinh vật có **hoạt ảnh**: chân bước, tay vung, đuôi vẫy, chim vỗ cánh, cá quẫy,
   ngủ nằm, ăn cúi đầu; người chơi thấy tay mình cầm giáo/rìu vung lên khi hành động.
 * **Lưu / tải thế giới**: 3 ô lưu + 1 ô tự động lưu (mỗi 3 phút, khi thoát / về menu); F5 lưu nhanh, F9 tải nhanh. Lưu đầy đủ
   mọi thứ (địa hình, vật chất, lòng đất, sinh vật kèm trí nhớ & kế hoạch, bộ lạc, quốc gia, loài tự tạo...) — tải lên chạy tiếp
