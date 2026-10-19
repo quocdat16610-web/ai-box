@@ -18,11 +18,20 @@
 #include "../core/Math.h"
 #include <climits>
 #include <string>
+#include <unordered_map>
 
 namespace wb {
 
 class Simulation;
 class Renderer;
+
+// Trạng thái hiển thị mượt của một sinh vật khác
+struct SmoothState {
+    Vec2 pos;          // vị trí hiển thị (đuổi theo vị trí mô phỏng)
+    float yaw = 0;     // hướng mặt hiển thị
+    float phase = 0;   // pha bước chân (tăng theo quãng đường đi được → chân không "trượt")
+    long seen = 0;     // khung hình gần nhất được cập nhật (dọn rác)
+};
 
 struct FirstPerson {
     bool active = false;      // đang ở góc nhìn thứ nhất
@@ -37,6 +46,18 @@ struct FirstPerson {
     Vector2 stickOrigin{}, stickPos{};
     bool looking = false;
     Vector2 lookLast{};
+    // Hoạt ảnh của chính mình (tay cầm công cụ / mõm, chân trước) khi hành động
+    float actAnim = 0;               // 1 → 0: đang vung tay / lao tới
+    int actKind = 0;                 // 0 tấn công, 1 ăn, 2 thu thập, 3 dựng lều
+    // Nội suy vị trí cho chuyển động mượt (mô phỏng chạy 20 tick/giây, màn hình 60 khung/giây)
+    std::unordered_map<Entity, SmoothState> smooth;
+    Vec2 camPos{};
+    bool camInit = false;
+    float walkPhase = 0;
+    // Shader ánh sáng + sương mù (GLSL 330 trên PC, GLSL 100 trên điện thoại)
+    Shader shader{};
+    bool shaderReady = false, shaderTried = false;
+    int locSun = -1, locFog = -1, locFogRange = -1, locLight = -1, locAmbient = -1;
     // Lưới địa hình đã dựng
     Model model{};
     bool meshReady = false;

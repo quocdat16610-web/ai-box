@@ -762,6 +762,8 @@ void fpAction(App& app, Brain::PlayerAct act) {
     FirstPerson& fp = app.fp;
     fp.msg = Brain::playerAction(*app.sim, fp.who, act, fpFacing(fp));
     fp.msgTime = static_cast<float>(GetTime());
+    fp.actAnim = 1.0f;   // hoạt ảnh vung tay / lao tới của chính mình
+    fp.actKind = static_cast<int>(act);
 }
 
 void handleFpInput(App& app) {

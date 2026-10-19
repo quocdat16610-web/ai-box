@@ -541,10 +541,27 @@ khác** (hang ↔ mặt đất) không thấy nhau; `canHunt` xét cả môi tr�
 Sức chứa môi trường theo loài (`capShare`) giữ hệ sinh thái cân bằng và chừa chỗ cho các loài có trí khôn.
 
 ### 15.4 Góc nhìn thứ nhất (`FirstPerson.cpp`) & nhập vai (`Brain::playerMove/playerAction`)
-Lưới địa hình 57×57 ô quanh sinh vật dựng lại khi nó sang ô mới; texture lấy từ bản đồ 2D (nhà, ruộng, lãnh thổ hiện đúng chỗ);
-cây, công trình, sinh vật khác là khối hộp theo hình dáng cơ thể. Ba chế độ: mặt đất, dưới nước (đáy biển), trong hang (khối đá
+Lưới địa hình 53×53 ô quanh sinh vật dựng lại khi nó sang ô mới. Đồ hoạ low-poly:
+* **Shader riêng** (GLSL 330 trên PC, GLSL 100/120 trên điện thoại & máy cũ; lỗi thì quay về shader mặc định): ánh nắng theo
+  pháp tuyến + sương mù theo độ sâu hoà vào màu chân trời; bầu trời gradient, mặt trời, mây trôi vẽ 2D theo hướng nhìn.
+* **Địa hình** tô màu theo đỉnh: màu & độ cao tại mỗi góc = trung bình 4 ô kề → chuyển sắc mượt (cỏ → cát → tuyết trên đỉnh).
+  Mặt nước là một lưới liền, sóng tính tại góc ô. Cỏ, cây (tán nhiều lớp / lá kim nhiều tầng) đung đưa theo gió.
+* **Nội suy**: mô phỏng chạy 20 tick/s, màn hình 60 khung/s → vị trí & hướng hiển thị của mỗi sinh vật (`SmoothState`) đuổi
+  theo vị trí mô phỏng với hệ số `1 - e^(-14·dt)`; pha bước chân tăng theo quãng đường thật nên chân không "trượt".
+* **Hoạt ảnh khung xương khối**: chi quay quanh khớp hông/vai, thân nhấp nhô, đầu gật, đuôi vẫy, cánh vỗ/lượn, cá quẫy đuôi;
+  trạng thái lấy từ AI (ngủ → nằm, ăn → cúi đầu, săn/chiến đấu → lao tới, thu thập/xây → vung tay).
+* **Cơ thể của chính mình** vẽ trong hệ toạ độ camera: tay + công cụ (người), mõm + chân trước (thú), mép cánh (chim);
+  `actAnim` tạo cú vung khi người chơi hành động.
+Ba chế độ: mặt đất, dưới nước (đáy biển), trong hang (khối đá
 có vách đứng, ánh sáng tắt dần theo khoảng cách, nấm phát quang). Khi điều khiển, `Mind::possessed` tắt AI của cá thể; hành
 động của người chơi đi qua đúng luật của mô phỏng (sát thương, độ cứng vật liệu so với công cụ, môi trường sống...).
+
+### 15.4b Lưu / tải (`SaveLoad.cpp`)
+Một lớp `Archive` với hàm `io()` dùng chung cho cả ghi và đọc (không thể lệch thứ tự trường). `SaveAccess` là `friend` của các
+lớp có trạng thái riêng (World, MatterGrid, MaterialRegistry, Registry, Simulation...). Phần đầu tệp (`SaveInfo`) đọc riêng để
+liệt kê ô lưu; kèm phiên bản định dạng + dấu vân tay bố cục struct → tệp lạ bị từ chối thay vì đọc sai. Ghi ra tệp tạm rồi
+đổi tên (không hỏng ô lưu cũ khi mất điện). Kiểm thử `save_load_world`: chạy N năm → lưu → tải → chạy N năm cho kết quả giống
+hệt từng con số so với chạy liền 2N năm.
 
 ### 15.5 Phòng thí nghiệm gen (`GeneLab`, `CustomGene`, `addCustomGene`)
 Bản nháp loài = bản sao loài gốc; có thể lai 50/50 hoặc lấy từng phần (trí tuệ & tay, hình dáng, môi trường, thức ăn, màu, sức
