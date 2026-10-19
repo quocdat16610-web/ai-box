@@ -199,6 +199,48 @@ void SpeciesRegistry::initDefaults() {
     defs_[sp::Mammoth].baseGenome[Gene::Size] = 0.8f;
 }
 
+const char* geneName(Gene g) {
+    static const char* n[] = {"Trí tuệ", "Sức mạnh", "Tốc độ", "Tính bầy đàn", "Hung hăng", "Tò mò", "Sinh sản",
+                              "Tuổi thọ", "Chịu lạnh", "Chịu nóng", "Khéo tay", "Kích thước", "Bơi lội"};
+    return n[static_cast<int>(g)];
+}
+
+const char* geneEffectName(GeneEffect e) {
+    static const char* n[] = {"Sinh lực", "Cơ bắp", "Nhanh nhẹn", "Não bộ", "Sinh sản", "Trường thọ", "Lông dày",
+                              "Tuyến mồ hôi", "Nọc độc", "Vảy giáp", "Quang hợp", "Phát quang", "Mang cá", "Đôi cánh"};
+    return n[static_cast<int>(e)];
+}
+
+const char* geneEffectDesc(GeneEffect e) {
+    static const char* n[] = {"Máu tối đa tăng", "Sát thương tăng", "Tốc độ di chuyển tăng", "Tiềm năng trí tuệ tăng (học & phát minh nhanh hơn)",
+                              "Đẻ nhiều con hơn", "Sống lâu hơn", "Chịu lạnh tốt", "Chịu nóng tốt", "Đòn đánh có độc: sát thương tăng mạnh",
+                              "Da vảy cứng: máu tăng nhưng chậm hơn", "Da có diệp lục: đói chậm hơn khi có nắng",
+                              "Cơ thể phát sáng trong bóng tối", "Thở được dưới nước: sống cả trên cạn lẫn dưới nước",
+                              "Mọc cánh: bay qua núi, sông, biển"};
+    return n[static_cast<int>(e)];
+}
+
+void addCustomGene(SpeciesDef& d, const CustomGene& g) {
+    d.customGenes.push_back(g);
+    float s = g.strength;
+    Genome& b = d.baseGenome;
+    switch (g.effect) {
+    case GeneEffect::Brain: b[Gene::Intelligence] = clamp01(b[Gene::Intelligence] + 0.25f * s); break;
+    case GeneEffect::Fertility: b[Gene::Fertility] = clamp01(b[Gene::Fertility] + 0.3f * s); d.litterMax = std::max(d.litterMax, 1 + static_cast<int>(s * 3)); break;
+    case GeneEffect::Longevity: b[Gene::Longevity] = clamp01(b[Gene::Longevity] + 0.3f * s); d.maxAgeYears = static_cast<int>(d.maxAgeYears * (1 + s)); break;
+    case GeneEffect::Fur: b[Gene::ColdResist] = clamp01(b[Gene::ColdResist] + 0.4f * s); break;
+    case GeneEffect::Sweat: b[Gene::HeatResist] = clamp01(b[Gene::HeatResist] + 0.4f * s); break;
+    case GeneEffect::Gills:
+        b[Gene::Swimming] = 1.0f;
+        if (d.habitat == Habitat::Land) d.habitat = Habitat::Amphibious;
+        break;
+    case GeneEffect::Wings:
+        if (d.habitat != Habitat::Cave) d.habitat = Habitat::Air;
+        break;
+    default: break;   // các hiệu ứng chỉ số cơ thể: áp dụng lúc sinh ra (spawnCreature)
+    }
+}
+
 bool SpeciesRegistry::canHunt(int a, int b) const {
     const SpeciesDef& A = defs_[a];
     const SpeciesDef& B = defs_[b];

@@ -57,6 +57,7 @@ if (WB_BUILD_HEADLESS AND NOT ANDROID)
     add_test(NAME wolves_form_tribe COMMAND worldbox_sim --scenario wolves --years 25 --seed 3 --quiet --expect-stage Tribe)
     add_test(NAME humans_build_village COMMAND worldbox_sim --scenario humans --years 40 --seed 5 --quiet --expect-stage Village)
     add_test(NAME chemistry_reactions COMMAND worldbox_sim --chemtest)
+    add_test(NAME gene_lab_species COMMAND worldbox_sim --genelab-test)
     add_test(NAME sandbox_runs COMMAND worldbox_sim --scenario sandbox --years 10 --seed 1 --quiet)
     # Công nghệ mở: phải có phát minh thật; vật lý/hoá học: phải xảy ra nhiều loại phản ứng khác nhau
     add_test(NAME humans_invent_and_react COMMAND worldbox_sim --scenario humans --years 30 --seed 8 --quiet --expect-designs 10 --expect-reactions 5)
@@ -78,12 +79,21 @@ if (WB_BUILD_GAME)
         GIT_SHALLOW TRUE
         PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchRaylibAndroid.cmake)
     FetchContent_MakeAvailable(raylib)
+    if (ANDROID)
+        # Bảo đảm bản vá xoay màn hình đã được áp dụng (nếu không: dừng build thay vì ra APK lỗi)
+        FetchContent_GetProperties(raylib SOURCE_DIR WB_RAYLIB_ROOT)
+        file(READ "${WB_RAYLIB_ROOT}/src/platforms/rcore_android.c" WB_RCORE_ANDROID)
+        if (NOT WB_RCORE_ANDROID MATCHES "WB_RESIZE_PATCH")
+            message(FATAL_ERROR "raylib chưa được vá xoay màn hình (cmake/PatchRaylibAndroid.cmake)")
+        endif()
+    endif()
 
     set(GAME_SOURCES
         src/app/main.cpp
         src/app/Renderer.cpp
         src/app/Ui.cpp
         src/app/Text.cpp
+        src/app/FirstPerson.cpp
     )
     if (ANDROID)
         # NativeActivity nạp "libmain.so" (khai báo trong AndroidManifest.xml)

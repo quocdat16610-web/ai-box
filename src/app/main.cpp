@@ -7,6 +7,7 @@
 #include "raylib.h"
 #include "Ui.h"
 #include <cstdlib>
+#include <cstdio>
 #include <string>
 
 int main() {
@@ -14,7 +15,9 @@ int main() {
 #if defined(PLATFORM_ANDROID)
     InitWindow(0, 0, "WorldBox AI"); // toàn màn hình theo kích thước thiết bị
 #else
-    InitWindow(1280, 760, "WorldBox AI — Sandbox văn minh tự tiến hoá");
+    int winW = 1280, winH = 760;
+    if (const char* ws = std::getenv("WB_WIN")) std::sscanf(ws, "%dx%d", &winW, &winH);   // thử bố cục màn hình dọc/ngang
+    InitWindow(winW, winH, "WorldBox AI — Sandbox văn minh tự tiến hoá");
 #endif
     SetExitKey(KEY_NULL); // ESC/Back mở menu thay vì thoát
     SetTargetFPS(60);
@@ -42,6 +45,17 @@ int main() {
             if (v == "chem") app.panel = wb::SidePanel::Chemistry;
             if (v == "none") app.panel = wb::SidePanel::None;
         }
+        if (const char* lab = std::getenv("WB_LAB")) {   // mở phòng thí nghiệm gen ở thẻ chỉ định
+            app.lab.open = true;
+            app.lab.tab = std::atoi(lab) % 4;
+            app.lab.base = 0; app.lab.donor = wb::sp::Eagle;
+        }
+        if (std::getenv("WB_GOTO_MINE")) {
+            // bay camera tới hầm mỏ đầu tiên (minh hoạ lòng đất)
+            for (int y = 0; y < app.sim->world.height(); ++y)
+                for (int x = 0; x < app.sim->world.width(); ++x)
+                    if (app.sim->world.at(x, y).building == wb::Building::Mine) { app.cam.target = {(x + 0.5f) * wb::kTileWorld, (y + 0.5f) * wb::kTileWorld}; app.cam.zoom = 3.5f; y = 1 << 20; break; }
+        }
         if (const char* gx = std::getenv("WB_GOTO_FORGE")) {
             (void)gx;   // bay camera tới lò luyện đầu tiên (minh hoạ hoá học trong lò)
             for (auto& g : app.sim->groups)
@@ -59,6 +73,16 @@ int main() {
             app.panel = wb::SidePanel::Creature;
             const wb::Transform& tr = app.sim->reg.get<wb::Transform>(best);
             app.cam.target = {tr.pos.x * wb::kTileWorld, tr.pos.y * wb::kTileWorld};
+        }
+        if (autostart && std::getenv("WB_FPV") && frame == 1 && !app.sim->agents.empty()) {
+            // Góc nhìn thứ nhất của một sinh vật (WB_FPV_SPECIES = id loài, mặc định loài 0)
+            int want = std::getenv("WB_FPV_SPECIES") ? std::atoi(std::getenv("WB_FPV_SPECIES")) : 0;
+            wb::Entity pick = wb::NullEntity;
+            for (wb::Entity e : app.sim->agents) if (app.sim->reg.get<wb::Body>(e).species == want) { pick = e; break; }
+            if (pick != wb::NullEntity) {
+                wb::fpEnter(app.fp, *app.sim, pick);
+                if (std::atoi(std::getenv("WB_FPV")) == 2) { app.fp.control = true; app.sim->reg.get<wb::Mind>(pick).possessed = true; }
+            }
         }
         wb::appFrame(app);
         if (shot && ++frame == frames) { TakeScreenshot(shot); break; }

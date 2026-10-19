@@ -11,6 +11,8 @@
 #pragma once
 #include "../core/Ecs.h"
 #include "Knowledge.h"
+#include "../core/Math.h"
+#include <string>
 
 namespace wb {
 
@@ -32,6 +34,14 @@ public:
     static void learnTech(Simulation& sim, Entity e, Tech t, bool invented);
     // Cập nhật trí tuệ hiệu dụng từ gen + trải nghiệm + văn hoá nhóm.
     static void updateIntellect(Simulation& sim, Entity e);
+
+    // ---- Người chơi điều khiển sinh vật (góc nhìn thứ nhất) ----
+    enum class PlayerAct { Attack, Eat, Gather, BuildHut };
+    // Thực hiện một hành động theo hướng nhìn `facing` (vector đơn vị trên mặt phẳng bản đồ).
+    // Trả về mô tả kết quả (để hiện lên màn hình). Dùng chung luật của AI: sát thương, ăn, khai thác...
+    static std::string playerAction(Simulation& sim, Entity e, PlayerAct act, Vec2 facing);
+    // Di chuyển sinh vật bị điều khiển một bước theo hướng `dir` (đã nhân tốc độ), tôn trọng môi trường sống.
+    static bool playerMove(Simulation& sim, Entity e, Vec2 dir);
 };
 
 } // namespace wb

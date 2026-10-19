@@ -236,9 +236,10 @@ void World::generateUnderground(uint32_t seed, Rng& rng) {
             V3 p = spherePoint(static_cast<float>(x), static_cast<float>(y), w_, h_);
             const Tile& t = at(x, y);
             UnderTile& u = under_[y * w_ + x];
-            float tunnel = std::fabs(cN.fbm3(p.x * R * 3.2f + 11, p.y * R * 3.2f, p.z * R * 3.2f - 5, 3) - 0.5f);
+            // 2 tầng nhiễu, tần số cao → đường hầm mảnh, ngoằn ngoèo, nối thành mạng (thay vì đốm)
+            float tunnel = std::fabs(cN.fbm3(p.x * R * 4.0f + 11, p.y * R * 4.0f, p.z * R * 4.0f - 5, 2) - 0.5f);
             float chamber = chN.fbm3(p.x * R * 2.0f, p.y * R * 2.0f + 21, p.z * R * 2.0f, 3);
-            bool open = tunnel < 0.022f || chamber > 0.70f;
+            bool open = tunnel < 0.018f || chamber > 0.72f;
             if (t.height < 0.30f) open = false;            // dưới biển sâu: đá đặc
             if (open) {
                 if (t.flags & kTileVolcanic || t.terrain == Terrain::Lava) u.kind = Under::Magma;
@@ -248,7 +249,7 @@ void World::generateUnderground(uint32_t seed, Rng& rng) {
             // Mạch quặng ngầm: dày dưới đồi núi, thưa dưới đồng bằng
             float v = vN.fbm3(p.x * R * 5 + 3, p.y * R * 5, p.z * R * 5 + 8, 3);
             bool highland = t.terrain == Terrain::Hill || t.terrain == Terrain::Mountain || t.terrain == Terrain::Snow;
-            if (u.kind != Under::Water && u.kind != Under::Magma && v > (highland ? 0.60f : 0.70f)) {
+            if (u.kind != Under::Water && u.kind != Under::Magma && v > (highland ? 0.63f : 0.72f)) {
                 float prov = pN.fbm3(p.x * R * 1.5f, p.y * R * 1.5f, p.z * R * 1.5f, 2);
                 MatId ore = prov < 0.40f ? mat::CopperOre : prov < 0.50f ? mat::TinOre : prov < 0.62f ? mat::IronOre
                           : prov < 0.66f ? mat::Gold : prov < 0.72f ? mat::Sulfur : mat::IronOre;

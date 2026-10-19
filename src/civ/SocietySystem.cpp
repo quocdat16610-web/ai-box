@@ -664,7 +664,8 @@ void SocietySystem::speciation(Group& g) {
     // Cô lập địa lý: không có nhóm cùng loài nào trong bán kính 35 ô (dòng gen bị cắt)
     for (const Group& o : sim_.groups)
         if (o.alive && o.id != g.id && o.species == sp &&
-            (o.homeX - g.homeX) * (o.homeX - g.homeX) + (o.homeY - g.homeY) * (o.homeY - g.homeY) < 35 * 35)
+            WrapSpace::dx(static_cast<float>(o.homeX - g.homeX)) * WrapSpace::dx(static_cast<float>(o.homeX - g.homeX)) +
+                    (o.homeY - g.homeY) * (o.homeY - g.homeY) < 35 * 35)
             return;
     SpeciesDef nd = sim_.species[sp];
     std::string base = sim_.species[sim_.species.root(sp)].name;
@@ -681,6 +682,27 @@ void SocietySystem::speciation(Group& g) {
     nd.r = static_cast<uint8_t>(std::clamp(nd.r + sim_.rng.irange(-40, 40), 30, 255));
     nd.g = static_cast<uint8_t>(std::clamp(nd.g + sim_.rng.irange(-40, 40), 30, 255));
     nd.b = static_cast<uint8_t>(std::clamp(nd.b + sim_.rng.irange(-40, 40), 30, 255));
+    // Kích thước cơ thể trôi theo gen kích thước trung bình
+    nd.size = std::clamp(nd.size * (0.8f + avg[Gene::Size] * 0.4f), 0.15f, 3.0f);
+    // ĐỘT BIẾN SINH GEN MỚI: đôi khi loài mới mang một đặc điểm chưa từng có, thường phù hợp
+    // với môi trường nơi nó bị cô lập (lạnh → lông dày, sông nước → mang cá, hang → phát quang...)
+    std::string newGene;
+    if (sim_.rng.chance(0.4f)) {
+        float T = sim_.world.matter.ambient(sim_.world, g.homeX, g.homeY);
+        bool nearWater = false;
+        for (int dy = -4; dy <= 4 && !nearWater; ++dy)
+            for (int dx = -4; dx <= 4; ++dx) if (sim_.world.isWater(g.homeX + dx, g.homeY + dy)) { nearWater = true; break; }
+        GeneEffect eff = static_cast<GeneEffect>(sim_.rng.irange(0, kGeneEffectCount - 1));
+        if (T < 2 && sim_.rng.chance(0.5f)) eff = GeneEffect::Fur;
+        else if (T > 28 && sim_.rng.chance(0.5f)) eff = GeneEffect::Sweat;
+        else if (nearWater && sim_.rng.chance(0.3f)) eff = GeneEffect::Gills;
+        else if (nd.habitat == Habitat::Cave && sim_.rng.chance(0.5f)) eff = GeneEffect::Glow;
+        if (eff == GeneEffect::Wings && !sim_.rng.chance(0.15f)) eff = GeneEffect::Agility;   // mọc cánh: rất hiếm
+        CustomGene cg{g.language.word(sim_.rng, 2), eff, sim_.rng.range(0.2f, 0.6f)};
+        addCustomGene(nd, cg);
+        newGene = std::string(", đột biến gen mới \"") + cg.name + "\" (" + geneEffectName(eff) + ")";
+    }
+    nd.engineered = false;
     int nid = sim_.species.add(nd);
     for (Entity e : g.members) sim_.reg.get<Body>(e).species = nid;
     g.species = nid;
@@ -689,7 +711,7 @@ void SocietySystem::speciation(Group& g) {
     std::snprintf(buf, sizeof(buf), "%.2f", avg[Gene::Intelligence]);
     sim_.chronicle.add(sim_.tick, EventKind::Evolution,
                        "TIẾN HOÁ: nhánh " + sim_.species[sp].name + " của " + g.displayName() + " trở thành loài mới \"" + nd.name +
-                           "\" (trí tuệ gen trung bình " + buf + (gainedHands ? ", đã tiến hoá chi trước biết cầm nắm!" : "") + ")",
+                           "\" (trí tuệ gen trung bình " + buf + (gainedHands ? ", đã tiến hoá chi trước biết cầm nắm!" : "") + newGene + ")",
                        g.homeX, g.homeY);
 }
 

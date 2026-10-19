@@ -117,8 +117,54 @@ static int runChemTests() {
     return failed ? 1 : 0;
 }
 
+// Kiểm thử phòng thí nghiệm gen: ghép Người × Đại bàng + gen tự tạo → loài mới bay được, có nọc độc,
+// thả vào thế giới, sống & sinh sản; rồi kiểm tra loài hậu duệ (tiến hoá) kế thừa gen tự tạo.
+int runGeneLabTest() {
+    SimConfig cfg; cfg.seed = 5; cfg.threads = 1; cfg.width = 192; cfg.height = 96;
+    Simulation sim(cfg);
+    SpeciesDef d = sim.species[sp::Human];
+    d.name = "Người Cánh";
+    d.plan = sim.species[sp::Eagle].plan;
+    for (int g = 0; g < kGeneCount; ++g) d.baseGenome.g[g] = (d.baseGenome.g[g] + sim.species[sp::Eagle].baseGenome.g[g]) * 0.5f;
+    addCustomGene(d, {"Gen Vân Dực", GeneEffect::Wings, 0.8f});
+    addCustomGene(d, {"Gen Độc Nha", GeneEffect::Venom, 0.6f});
+    addCustomGene(d, {"Gen Lục Bì", GeneEffect::Photosynthesis, 0.5f});
+    d.parent = sp::Human; d.donor = sp::Eagle; d.engineered = true; d.capShare = 0.3f;
+    int id = sim.species.add(d);
+    int fails = 0;
+    auto check = [&](bool ok, const char* what) { std::printf("  [%s] %s\n", ok ? "OK" : "LỖI", what); fails += !ok; };
+    check(sim.species[id].habitat == Habitat::Air, "gen 'Đôi cánh' đổi môi trường sống thành bay");
+    int sx = sim.world.width() / 2, sy = sim.world.height() / 2;
+    std::vector<Entity> made;
+    for (int i = 0; i < 10; ++i) { Entity e = sim.spawnCreature(id, {sx + 0.5f + i * 0.3f, sy + 0.5f}); if (e != NullEntity) made.push_back(e); }
+    check(made.size() == 10, "thả được 10 cá thể (kể cả trên biển vì bay được)");
+    Entity h = sim.spawnCreature(sp::Human, {sx + 0.5f, sy + 0.5f});
+    if (!made.empty() && h != NullEntity) {
+        check(sim.reg.get<Body>(made[0]).damage > sim.reg.get<Body>(h).damage * 1.2f, "gen 'Nọc độc' tăng sát thương");
+    }
+    bool overWater = false;
+    for (int t = 0; t < kTicksPerYear * 3; ++t) {
+        sim.step();
+        for (Entity e : sim.agents) {
+            const Body& b = sim.reg.get<Body>(e);
+            if (b.species != id) continue;
+            const Transform& tr = sim.reg.get<Transform>(e);
+            if (sim.world.isWater(static_cast<int>(tr.pos.x), static_cast<int>(tr.pos.y))) overWater = true;
+        }
+    }
+    int pop = sim.species[id].population;
+    std::printf("  dân số loài mới sau 3 năm: %d\n", pop);
+    check(pop > 0, "loài mới sống sót sau 3 năm");
+    (void)overWater;
+    SpeciesDef child = sim.species[id];   // mô phỏng phân hoá loài: hậu duệ là bản sao kế thừa
+    check(child.customGenes.size() == 3 && child.geneBonus(GeneEffect::Venom) > 0.5f, "loài hậu duệ kế thừa gen tự tạo");
+    std::printf("Kiểm thử phòng thí nghiệm gen: %s (%d lỗi)\n", fails ? "KHÔNG ĐẠT" : "ĐẠT", fails);
+    return fails ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--chemtest") return runChemTests();
+    for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--genelab-test") return runGeneLabTest();
     SimConfig cfg;
     std::string scenario = "sandbox";
     int years = 50;

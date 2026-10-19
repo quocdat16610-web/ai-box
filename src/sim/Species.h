@@ -23,6 +23,35 @@ enum class Habitat : uint8_t { Land, Water, Air, Cave, Amphibious };
 // Hình dáng cơ thể (để vẽ sprite 2D và hình khối 3D ở góc nhìn thứ nhất)
 enum class BodyPlan : uint8_t { Humanoid, Quadruped, Bird, Fish, Bat, Spider, Reptile, Giant, Primate };
 
+// ---- Gen tự tạo (do Thần "cấy ghép" ở phòng thí nghiệm, hoặc đột biến tự nhiên sinh ra) ----
+// Mỗi gen có một hiệu ứng sinh học + cường độ; di truyền cho mọi cá thể và mọi loài hậu duệ.
+enum class GeneEffect : uint8_t {
+    Vitality,       // sinh lực: máu tối đa ↑
+    Muscle,         // cơ bắp: sát thương ↑
+    Agility,        // nhanh nhẹn: tốc độ ↑
+    Brain,          // não bộ: trí tuệ ↑
+    Fertility,      // sinh sản: đẻ nhiều ↑
+    Longevity,      // trường thọ
+    Fur,            // lông dày: chịu lạnh
+    Sweat,          // tuyến mồ hôi: chịu nóng
+    Venom,          // nọc độc: sát thương ↑↑
+    Armor,          // vảy giáp: máu ↑, chậm hơn
+    Photosynthesis, // quang hợp: đỡ đói (da có diệp lục)
+    Glow,           // phát quang sinh học (nhìn thấy trong bóng tối)
+    Gills,          // mang cá: sống được cả dưới nước
+    Wings,          // cánh: bay được
+    Count
+};
+constexpr int kGeneEffectCount = static_cast<int>(GeneEffect::Count);
+const char* geneEffectName(GeneEffect e);
+const char* geneEffectDesc(GeneEffect e);
+
+struct CustomGene {
+    std::string name;      // tên gen (người chơi đặt hoặc ngôn ngữ của loài)
+    GeneEffect effect;
+    float strength = 0.5f; // 0..1
+};
+
 struct SpeciesDef {
     std::string name;
     Diet diet = Diet::Omnivore;
@@ -39,9 +68,22 @@ struct SpeciesDef {
     Genome baseGenome;         // gen trung bình của loài
     uint8_t r = 255, g = 255, b = 255; // màu sprite
     int parent = -1;           // loài tổ tiên (-1 = nguyên thuỷ)
+    int donor = -1;            // loài cho gen (khi được tạo bằng cấy ghép gen)
+    bool engineered = false;   // do Thần tạo ra ở phòng thí nghiệm gen
+    std::vector<CustomGene> customGenes;
+    // Tổng cường độ các gen tự tạo có hiệu ứng e
+    float geneBonus(GeneEffect e) const {
+        float t = 0;
+        for (const CustomGene& c : customGenes) if (c.effect == e) t += c.strength;
+        return t;
+    }
     long bornTick = 0;
     int population = 0;        // cập nhật mỗi tick bởi Simulation
 };
+
+// Thêm một gen tự tạo vào loài: hiệu ứng lên bộ gen gốc / môi trường sống áp dụng MỘT lần ở đây,
+// hiệu ứng lên chỉ số cơ thể áp dụng mỗi khi sinh ra cá thể (Simulation::spawnCreature).
+void addCustomGene(SpeciesDef& d, const CustomGene& g);
 
 class SpeciesRegistry {
 public:

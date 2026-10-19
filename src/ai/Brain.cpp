@@ -1698,4 +1698,140 @@ void Brain::act(Simulation& sim, Entity e) {
     }
 }
 
+// ===========================================================================
+// Người chơi nhập vai một sinh vật (góc nhìn thứ nhất)
+// ===========================================================================
+bool Brain::playerMove(Simulation& sim, Entity e, Vec2 dir) {
+    Transform& tr = sim.reg.get<Transform>(e);
+    const Body& body = sim.reg.get<Body>(e);
+    const Habitat hab = sim.species[body.species].habitat;
+    bool swimmer = sim.reg.get<GenomeC>(e).genome[Gene::Swimming] > 0.65f;
+    bool raft = heldValue(sim, e, Purpose::Float) >= 60.0f;
+    auto ok = [&](Vec2 p) {
+        int x = static_cast<int>(std::floor(p.x)), y = static_cast<int>(std::floor(p.y));
+        if (sim.habitable(body.species, x, y)) return true;
+        if (hab != Habitat::Land || !sim.world.isWater(x, y)) return false;
+        return raft || (swimmer && sim.world.at(x, y).terrain == Terrain::ShallowWater);
+    };
+    Vec2 np = tr.pos + dir;
+    // trượt dọc vật cản: thử đi thẳng, rồi từng trục
+    if (ok(np)) tr.pos = wrapPos(np);
+    else if (ok({np.x, tr.pos.y})) tr.pos = wrapPos({np.x, tr.pos.y});
+    else if (ok({tr.pos.x, np.y})) tr.pos = wrapPos({tr.pos.x, np.y});
+    else return false;
+    tr.moving = dir.len2() > 1e-6f;
+    tr.target = tr.pos + dir * 4.0f;
+    return true;
+}
+
+std::string Brain::playerAction(Simulation& sim, Entity e, PlayerAct act, Vec2 facing) {
+    Transform& tr = sim.reg.get<Transform>(e);
+    Body& body = sim.reg.get<Body>(e);
+    Inventory& inv = sim.reg.get<Inventory>(e);
+    Mind& m = sim.reg.get<Mind>(e);
+    Social& so = sim.reg.get<Social>(e);
+    const SpeciesDef& sd = sim.species[body.species];
+    char buf[160];
+    Vec2 front = tr.pos + facing * 1.0f;
+    int fx = static_cast<int>(std::floor(front.x)), fy = static_cast<int>(std::floor(front.y));
+    int hx = static_cast<int>(std::floor(tr.pos.x)), hy = static_cast<int>(std::floor(tr.pos.y));
+    switch (act) {
+    case PlayerAct::Attack: {
+        // Mục tiêu: sinh vật gần nhất trong hình nón phía trước (cùng tầng sống)
+        Entity best = NullEntity;
+        float bestD = 1e9f;
+        sim.grid.query(tr.pos, 2.2f, [&](Entity o, Vec2 op) {
+            if (o == e) return;
+            const Body* ob = sim.reg.pool<Body>().tryGet(o);
+            if (!ob || ob->dead || sim.layerOf(ob->species) != sim.layerOf(body.species)) return;
+            Vec2 d = op - tr.pos;
+            float L = d.len();
+            if (L > 0.05f && (d.x * facing.x + d.y * facing.y) / L < 0.35f) return;   // không ở phía trước
+            if (L < bestD) { bestD = L; best = o; }
+        });
+        if (best == NullEntity) return "Không có ai ở phía trước để tấn công";
+        const std::string victim = sim.species[sim.reg.get<Body>(best).species].name;
+        float weapon = std::max(heldValue(sim, e, Purpose::Pierce), heldValue(sim, e, Purpose::Smash) * 0.7f);
+        bool killed = Brain::attack(sim, e, best, 1.0f + weapon * 0.3f);
+        m.skill[static_cast<int>(Skill::Combat)] = std::min(1.0f, m.skill[static_cast<int>(Skill::Combat)] + 0.01f);
+        if (killed) {
+            if (sd.diet != Diet::Herbivore) inv.food += static_cast<int>(2 + sim.species[sim.reg.valid(best) ? sim.reg.get<Body>(best).species : 0].size * 3);
+            std::snprintf(buf, sizeof(buf), "Đã hạ gục %s!", victim.c_str());
+        } else std::snprintf(buf, sizeof(buf), "Tấn công %s", victim.c_str());
+        m.think("%s", buf);
+        return buf;
+    }
+    case PlayerAct::Eat: {
+        if (inv.food > 0 && body.hunger > 0.05f) {
+            inv.food--;
+            body.hunger = std::max(0.0f, body.hunger - 0.3f);
+            return "Ăn đồ mang theo — đỡ đói";
+        }
+        if (sd.diet != Diet::Carnivore) {
+            for (auto [x, y] : {std::pair<int, int>{hx, hy}, std::pair<int, int>{fx, fy}})
+                if (sim.foodAt(body.species, x, y) > 5) {
+                    sim.eatFoodAt(body.species, x, y, 12);
+                    body.hunger = std::max(0.0f, body.hunger - 0.12f);
+                    return sd.habitat == Habitat::Cave ? "Ăn nấm & côn trùng trong hang" : (sd.habitat == Habitat::Water ? "Ăn tảo, sinh vật phù du" : "Ăn quả & cây cỏ");
+                }
+        }
+        if (sd.diet != Diet::Herbivore)
+            for (auto& it : sim.world.items())
+                if ((it.kind == ItemKind::Corpse || it.kind == ItemKind::Meat) && it.amount > 0 &&
+                    std::abs(WrapSpace::dx(static_cast<float>(it.x - hx))) <= 1 && std::abs(it.y - hy) <= 1) {
+                    it.amount--;
+                    body.hunger = std::max(0.0f, body.hunger - 0.25f);
+                    return "Ăn thịt";
+                }
+        return "Không có gì ăn được ở đây";
+    }
+    case PlayerAct::Gather: {
+        if (!sd.dexterous) return "Loài này không có tay để thu thập";
+        Tile& t = sim.world.at(fx, fy);
+        Tile& h = sim.world.at(hx, hy);
+        Tile* tt = (t.wood > 5 || t.stone > 5 || t.ore > 5) ? &t : &h;
+        int tx = tt == &t ? fx : hx, ty = tt == &t ? fy : hy;
+        float cut = heldValue(sim, e, Purpose::Cut), dig = heldValue(sim, e, Purpose::Dig);
+        if (tt->wood > 5) {
+            int n = 1 + static_cast<int>(cut * 0.4f);
+            tt->wood = static_cast<uint8_t>(std::max(0, tt->wood - 12));
+            inv.add(mat::Wood, n); inv.add(mat::Fiber, 1);
+            m.know.learnMat(mat::Wood);
+            sim.world.markDirty(tx, ty);
+            std::snprintf(buf, sizeof(buf), "Đốn được %d gỗ (công cụ cắt %.1f)", n, cut);
+            return buf;
+        }
+        if (tt->ore > 5 || tt->stone > 5) {
+            bool ore = tt->ore > 5;
+            MatId mt = ore ? tt->oreMat : tt->stoneMat;
+            if (mt == kNoMat) mt = mat::Stone;
+            float hard = sim.world.materials[mt].hardness;
+            if (ore && dig < hard * 0.6f) {
+                m.know.frustrate(Purpose::Dig, 0.3f);
+                std::snprintf(buf, sizeof(buf), "%s quá cứng — cần dụng cụ đào tốt hơn (%.1f < %.1f)", sim.world.materials[mt].name.c_str(), dig, hard * 0.6f);
+                return buf;
+            }
+            uint8_t& field = ore ? tt->ore : tt->stone;
+            field = static_cast<uint8_t>(std::max(0, field - 15));
+            inv.add(mt, 1 + static_cast<int>(dig * 0.3f));
+            m.know.learnMat(mt);
+            sim.world.markDirty(tx, ty);
+            std::snprintf(buf, sizeof(buf), "Khai thác %s", sim.world.materials[mt].name.c_str());
+            return buf;
+        }
+        return "Phía trước không có cây, đá hay quặng";
+    }
+    case PlayerAct::BuildHut: {
+        if (!sd.dexterous) return "Loài này không biết dựng nhà";
+        if (inv.wood < 3) return "Cần 3 gỗ để dựng lều";
+        if (!sim.world.walkable(fx, fy) || sim.world.at(fx, fy).building != Building::None) return "Không dựng được ở chỗ này";
+        inv.wood -= 3;
+        sim.world.setBuilding(fx, fy, Building::Hut);
+        if (so.group >= 0) sim.world.at(fx, fy).owner = static_cast<int16_t>(so.group);
+        return "Đã dựng một túp lều";
+    }
+    }
+    return "";
+}
+
 } // namespace wb

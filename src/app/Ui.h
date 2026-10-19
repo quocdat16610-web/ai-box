@@ -11,6 +11,7 @@
 #pragma once
 #include "raylib.h"
 #include "Renderer.h"
+#include "FirstPerson.h"
 #include "../sim/GodPowers.h"
 #include "../sim/Scenarios.h"
 #include "../sim/Simulation.h"
@@ -21,6 +22,22 @@ namespace wb {
 
 enum class ToolCategory : uint8_t { Inspect, Terrain, Matter, Life, Disaster, Weather, Divine, Count };
 enum class SidePanel : uint8_t { None, Creature, Group, Chronicle, Species, Chemistry };
+
+// Phòng thí nghiệm gen: ghép gen giữa các loài, chỉnh từng gen, tạo gen mới, chỉnh ngoại hình
+// → tạo một LOÀI MỚI thả vào thế giới (loài này vẫn tiếp tục tự tiến hoá về sau).
+struct GeneLab {
+    bool open = false;
+    int tab = 0;                 // 0 cấy ghép, 1 bộ gen, 2 ngoại hình, 3 gen mới
+    int base = 0, donor = 4;     // loài gốc / loài cho gen
+    SpeciesDef draft;            // bản nháp loài mới
+    bool hasDraft = false;
+    int newEffect = 0;           // gen mới: hiệu ứng
+    float newStrength = 0.5f;
+    std::string newGeneName;
+    int focus = 0;               // ô nhập chữ đang chọn: 1 tên loài, 2 tên gen
+    std::string message;
+    double messageTime = -10;
+};
 
 struct App {
     std::unique_ptr<Simulation> sim;
@@ -35,6 +52,8 @@ struct App {
     // Quả địa cầu: thu nhỏ bản đồ hết cỡ → chuyển sang xem hành tinh hình cầu 3D
     bool globe = false;
     GlobeView globeView;
+    FirstPerson fp;            // góc nhìn thứ nhất / điều khiển sinh vật
+    GeneLab lab;
     int lastW = 0, lastH = 0;   // kích thước màn hình khung trước (phát hiện xoay điện thoại)
 
     ToolCategory category = ToolCategory::Inspect;

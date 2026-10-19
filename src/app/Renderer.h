@@ -57,10 +57,19 @@ public:
     void drawGlobe(Simulation& sim, const GlobeView& gv, const RenderOptions& opt, float time, float uiScale);
     // Texture địa hình (dùng chung cho quả địa cầu và góc nhìn thứ nhất)
     const Texture2D& terrainTexture() const { return tex_; }
+    const Texture2D& undergroundTexture(Simulation& sim) { syncUnder(sim); return underTex_; }
 
 private:
     void paintTile(Simulation& sim, int x, int y);
+    void paintUnder(Simulation& sim, int x, int y);
+    void syncUnder(Simulation& sim);
+    void drawCreatures(Simulation& sim, const Camera2D& cam, const RenderOptions& opt, float time, bool underground);
     void buildGlobeMesh();
+    Image underImage_{};
+    Texture2D underTex_{};
+    bool underReady_ = false;
+    int underVersion_ = -1;
+    double underSyncTime_ = -10;
     Image image_{};
     Texture2D tex_{};
     Model globe_{};

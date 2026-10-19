@@ -4,6 +4,7 @@
 #include "Renderer.h"
 #include "Text.h"
 #include "../sim/Simulation.h"
+#include "../ai/Goap.h"
 #include <cmath>
 #include <algorithm>
 
@@ -41,6 +42,7 @@ const char* buildingSprite(Building b) {
     case Building::ScentMark:  return "....""..y.""....""....";
     case Building::Totem:      return ".T..""FTF."".T.."".T..";
     case Building::Hearth:     return "....""sOOs""sOOs""....";
+    case Building::Mine:       return "T..T""TKKT""wKKw""....";   // cửa hầm: khung gỗ + lối xuống tối
     default: return nullptr;
     }
 }
@@ -72,6 +74,7 @@ void Renderer::init(Simulation& sim) {
 
 void Renderer::shutdown() {
     if (globeReady_) { UnloadModel(globe_); globeReady_ = false; }   // không gỡ texture (dùng chung)
+    if (underReady_) { UnloadTexture(underTex_); UnloadImage(underImage_); underReady_ = false; underVersion_ = -1; }
     if (!ready_) return;
     UnloadTexture(tex_);
     UnloadImage(image_);
@@ -147,6 +150,8 @@ void Renderer::paintTile(Simulation& sim, int x, int y) {
             default:
                 break;
             }
+            // Cửa hang tự nhiên: hốc tối dẫn xuống lòng đất
+            if ((t.flags & kTileCaveEntrance) && pxl >= 1 && pxl <= 2 && py >= 1 && py <= 2) c = (py == 1) ? rgb(45, 38, 35) : rgb(18, 14, 14);
             // Quả mọng, đá, quặng lộ thiên
             if (t.food > 140 && t.terrain != Terrain::Farmland && pxl == 2 && py == 2 && (h & 1)) c = rgb(200, 40, 60);
             if (t.ore > 40 && h % 6 == 0) {
@@ -340,16 +345,97 @@ void Renderer::drawGlobe(Simulation& sim, const GlobeView& gv, const RenderOptio
     (void)opt;
 }
 
+// ---------------------------------------------------------------------------
+// Lòng đất: hang động, đường hầm mỏ, mạch quặng, hồ ngầm, magma
+// ---------------------------------------------------------------------------
+void Renderer::paintUnder(Simulation& sim, int x, int y) {
+    const World& w = sim.world;
+    const UnderTile& u = w.under(x, y);
+    const Tile& t = w.at(x, y);
+    Color* px = static_cast<Color*>(underImage_.data);
+    int stride = underImage_.width;
+    bool highland = t.terrain == Terrain::Hill || t.terrain == Terrain::Mountain || t.terrain == Terrain::Snow;
+    for (int py = 0; py < kTilePx; ++py)
+        for (int pxl = 0; pxl < kTilePx; ++pxl) {
+            uint32_t h = hash32(static_cast<uint32_t>((y * kTilePx + py) * 92821 + (x * kTilePx + pxl) * 68917));
+            int j = static_cast<int>(h % 11) - 5;
+            Color c;
+            switch (u.kind) {
+            case Under::Rock:
+                // đá liền khối: phân tầng sáng/tối theo hàng (địa tầng), dưới đồi núi đá xám hơn
+                c = highland ? rgb(78, 74, 76) : rgb(62, 52, 46);
+                c = shade(c, j + ((y * kTilePx + py) / 3 % 2 ? 4 : -4));
+                if (t.height < 0.42f) c = shade(c, -18);   // dưới đáy biển
+                break;
+            case Under::Cave:
+                c = shade(rgb(26, 23, 30), j / 2);
+                if (h % 23 == 0) c = rgb(92, 86, 80);                        // nhũ đá / măng đá
+                if (u.fungus > 40 && h % 9 == 0) c = rgb(60, 210, 170);      // nấm phát quang
+                break;
+            case Under::Tunnel:
+                c = shade(rgb(78, 60, 42), j);
+                if ((pxl == 0 || pxl == kTilePx - 1) && (y + x) % 2 == 0) c = rgb(125, 88, 50);  // cột chống bằng gỗ
+                if (pxl == 1 && py == 1 && (x * 7 + y * 3) % 5 == 0) c = rgb(255, 205, 90);     // đèn dầu
+                break;
+            case Under::Water:
+                c = shade(rgb(28, 58, 118), j);
+                if (h % 13 == 0) c = rgb(70, 110, 180);
+                break;
+            case Under::Magma:
+                c = h % 4 == 0 ? rgb(255, 190, 60) : rgb(225, 80, 20);
+                break;
+            }
+            // Mạch quặng: các tinh thể màu khoáng chất, càng giàu càng dày
+            if (u.oreAmt > 0 && u.oreMat != 0xFF && u.kind != Under::Water && u.kind != Under::Magma &&
+                static_cast<int>(h % 100) < 6 + u.oreAmt / 18) {
+                const MaterialDef& od = w.materials[static_cast<MatId>(u.oreMat)];
+                c = shade(rgb(od.r, od.g, od.b), 25);
+            }
+            // Cửa hang & cửa hầm mỏ: lối xuống từ mặt đất
+            if ((t.flags & kTileCaveEntrance) && pxl >= 1 && pxl <= 2 && py >= 1 && py <= 2) c = rgb(150, 200, 255);
+            if (t.building == Building::Mine && py == 0) c = rgb(150, 105, 60);
+            px[(y * kTilePx + py) * stride + x * kTilePx + pxl] = c;
+        }
+}
+
+void Renderer::syncUnder(Simulation& sim) {
+    if (!underReady_) {
+        underImage_ = GenImageColor(w_ * kTilePx, h_ * kTilePx, BLACK);
+        underTex_ = LoadTextureFromImage(underImage_);
+        SetTextureFilter(underTex_, TEXTURE_FILTER_POINT);
+        underReady_ = true;
+        underVersion_ = -1;
+    }
+    // Vẽ lại cả lớp khi lòng đất thay đổi (đào hầm), tối đa ~2 lần mỗi giây
+    if (underVersion_ == sim.world.underVersion || GetTime() - underSyncTime_ < 0.5) return;
+    for (int y = 0; y < h_; ++y) for (int x = 0; x < w_; ++x) paintUnder(sim, x, y);
+    UpdateTexture(underTex_, underImage_.data);
+    underVersion_ = sim.world.underVersion;
+    underSyncTime_ = GetTime();
+}
+
 void Renderer::drawWorld(Simulation& sim, const Camera2D& cam, const RenderOptions& opt, float time) {
     const float S = kTileWorld;
     const float WS = w_ * S;
     // Khung nhìn (để culling)
     Vector2 tl = GetScreenToWorld2D({0, 0}, cam);
     Vector2 br = GetScreenToWorld2D({static_cast<float>(GetScreenWidth()), static_cast<float>(GetScreenHeight())}, cam);
+    const bool underground = opt.layer == Layer::Underground;
+    if (underground) syncUnder(sim);
+    const Texture2D& T = underground ? underTex_ : tex_;
     // Hành tinh quấn vòng: vẽ các bản sao texture chạm khung nhìn (trái/giữa/phải)
     for (int k = static_cast<int>(std::floor(tl.x / WS)); k <= static_cast<int>(std::floor(br.x / WS)); ++k)
-        DrawTexturePro(tex_, {0, 0, static_cast<float>(tex_.width), static_cast<float>(tex_.height)},
+        DrawTexturePro(T, {0, 0, static_cast<float>(T.width), static_cast<float>(T.height)},
                        {k * WS, 0, WS, h_ * S}, {0, 0}, 0, WHITE);
+    if (underground) {
+        // Lòng đất: chỉ thấy sinh vật hang động + thợ mỏ đang đào trong hầm
+        drawCreatures(sim, cam, opt, time, true);
+        if (sim.reg.valid(opt.selected)) {
+            const Transform& tr = sim.reg.get<Transform>(opt.selected);
+            DrawCircleLinesV({nearestCopyX(tr.pos.x * S, cam.target.x, WS), tr.pos.y * S}, 6, WHITE);
+        }
+        return;
+    }
     // Ô trong khung nhìn: x KHÔNG bị kẹp (world.at / matter.cell tự quấn), chỉ y bị kẹp ở hai cực
     int x0 = static_cast<int>(std::floor(tl.x / S)) - 1, y0 = std::max(0, static_cast<int>(tl.y / S) - 1);
     int x1 = static_cast<int>(std::floor(br.x / S)) + 1, y1 = std::min(h_ - 1, static_cast<int>(br.y / S) + 1);
@@ -447,35 +533,7 @@ void Renderer::drawWorld(Simulation& sim, const Camera2D& cam, const RenderOptio
         }
     }
 
-    // Sinh vật
-    for (Entity e : sim.agents) {
-        const Transform& tr = sim.reg.get<Transform>(e);
-        float px = nx(tr.pos.x * S), py = tr.pos.y * S;
-        if (px < tl.x - 8 || py < tl.y - 8 || px > br.x + 8 || py > br.y + 8) continue;
-        const Body& b = sim.reg.get<Body>(e);
-        const Social& so = sim.reg.get<Social>(e);
-        const SpeciesDef& sd = sim.species[b.species];
-        Color c = speciesColor(sim, b.species);
-        float sz = std::clamp(sd.size, 0.4f, 2.0f);
-        bool child = b.ageTicks < sd.adultYears * kTicksPerYear;
-        if (child) sz *= 0.7f;
-        // Nhịp bước chân
-        float bob = tr.moving ? std::sin(time * 14 + entityIndex(e)) * 0.5f : 0;
-        if (sd.dexterous) {
-            // Dạng người: thân mặc "áo" màu nhóm, đầu màu da
-            Color cloth = so.group >= 0 ? groupColor(sim, so.group) : shade(c, -50);
-            DrawRectangleV({px - 1.5f * sz, py - 1.0f * sz + bob}, {3 * sz, 3 * sz}, cloth);
-            DrawRectangleV({px - 1.0f * sz, py - 3.0f * sz + bob}, {2 * sz, 2 * sz}, c);
-            if (heldValue(sim, e, Purpose::Pierce) > 0 || heldValue(sim, e, Purpose::Ranged) > 0) DrawRectangleV({px + 1.5f * sz, py - 3 * sz + bob}, {0.7f, 4 * sz}, Color{200, 200, 210, 255});
-        } else {
-            // Dạng thú: thân ngang + đầu
-            DrawRectangleV({px - 2.2f * sz, py - 1.0f * sz + bob}, {4.4f * sz, 2.4f * sz}, shade(c, -15));
-            DrawRectangleV({px + 1.4f * sz, py - 2.0f * sz + bob}, {1.8f * sz, 1.8f * sz}, c);
-            if (so.group >= 0) DrawRectangleV({px - 0.5f, py - 2.8f * sz}, {1, 1}, groupColor(sim, so.group));
-        }
-        if (b.sleeping) DrawRectangleV({px + 2, py - 5}, {1.2f, 1.2f}, Color{200, 200, 255, 200});
-        if (so.role == Role::Leader) DrawRectangleV({px - 1, py - 5 * sz}, {2, 1}, GOLD);
-    }
+    drawCreatures(sim, cam, opt, time, false);
     // Cá thể được chọn: viền + đường đi tới mục tiêu
     if (sim.reg.valid(opt.selected)) {
         const Transform& tr = sim.reg.get<Transform>(opt.selected);
@@ -486,6 +544,131 @@ void Renderer::drawWorld(Simulation& sim, const Camera2D& cam, const RenderOptio
         const Mind& m = sim.reg.get<Mind>(opt.selected);
         float r = (5.0f + m.intellect * 6.0f + m.pers.openness * 3.0f) * S;
         DrawCircleLinesV(sp, r, Color{255, 255, 255, 50}); // tầm nhìn
+    }
+}
+
+// Vẽ sinh vật theo HÌNH DÁNG CƠ THỂ (người, thú bốn chân, chim, cá, dơi, nhện, bò sát, voi ma mút, khỉ).
+// underground = true: chỉ vẽ sinh vật trong hang + thợ mỏ; false: mọi sinh vật trên mặt đất / nước / trời.
+void Renderer::drawCreatures(Simulation& sim, const Camera2D& cam, const RenderOptions& opt, float time, bool underground) {
+    (void)opt;
+    const float S = kTileWorld;
+    Vector2 tl = GetScreenToWorld2D({0, 0}, cam);
+    Vector2 br = GetScreenToWorld2D({static_cast<float>(GetScreenWidth()), static_cast<float>(GetScreenHeight())}, cam);
+    for (Entity e : sim.agents) {
+        const Transform& tr = sim.reg.get<Transform>(e);
+        const Body& b = sim.reg.get<Body>(e);
+        const SpeciesDef& sd = sim.species[b.species];
+        bool caveDweller = sd.habitat == Habitat::Cave;
+        bool miner = false;
+        if (underground && !caveDweller) {
+            // thợ mỏ: đang đào đá/quặng tại ô có hầm
+            const Mind& m = sim.reg.get<Mind>(e);
+            if (m.plan.done()) continue;
+            ActionId a = m.plan.current();
+            miner = (a == ActionId::GatherOre || a == ActionId::GatherStone) && sim.world.inBounds(m.tx, m.ty) &&
+                    sim.world.under(m.tx, m.ty).kind == Under::Tunnel && dist2(tr.pos, {m.tx + 0.5f, m.ty + 0.5f}) < 4;
+            if (!miner) continue;
+        }
+        if (!underground && caveDweller) continue;   // ở dưới lòng đất: không thấy từ trên mặt
+        float px = nearestCopyX(tr.pos.x * S, cam.target.x, w_ * S), py = tr.pos.y * S;
+        if (px < tl.x - 8 || py < tl.y - 8 || px > br.x + 8 || py > br.y + 8) continue;
+        const Social& so = sim.reg.get<Social>(e);
+        Color c = speciesColor(sim, b.species);
+        float sz = std::clamp(sd.size, 0.4f, 2.4f);
+        bool child = b.ageTicks < sd.adultYears * kTicksPerYear;
+        if (child) sz *= 0.7f;
+        // Nhịp bước chân / vỗ cánh
+        float phase = time * 14 + entityIndex(e);
+        float bob = tr.moving ? std::sin(phase) * 0.5f : 0;
+        if (miner) DrawCircleV({px, py}, 5, Color{255, 200, 90, 60});   // đèn thợ mỏ
+        if (!sd.customGenes.empty() && sd.geneBonus(GeneEffect::Glow) > 0)       // gen phát quang sinh học
+            DrawCircleV({px, py - 1}, 4 + 2 * std::sin(time * 3 + entityIndex(e)), Color{c.r, c.g, c.b, 70});
+        switch (sd.plan) {
+        case BodyPlan::Humanoid: {
+            // Dạng người: thân mặc "áo" màu nhóm, đầu màu da
+            Color cloth = so.group >= 0 ? groupColor(sim, so.group) : shade(c, -50);
+            DrawRectangleV({px - 1.5f * sz, py - 1.0f * sz + bob}, {3 * sz, 3 * sz}, cloth);
+            DrawRectangleV({px - 1.0f * sz, py - 3.0f * sz + bob}, {2 * sz, 2 * sz}, c);
+            if (heldValue(sim, e, Purpose::Pierce) > 0 || heldValue(sim, e, Purpose::Ranged) > 0) DrawRectangleV({px + 1.5f * sz, py - 3 * sz + bob}, {0.7f, 4 * sz}, Color{200, 200, 210, 255});
+            if (miner) DrawRectangleV({px - 1.2f * sz, py - 3.6f * sz}, {2.4f * sz, 0.8f}, Color{240, 200, 60, 255});   // mũ thợ mỏ
+            break;
+        }
+        case BodyPlan::Primate: {
+            // Khỉ: thân khom, tay dài, đuôi cong
+            DrawRectangleV({px - 1.2f * sz, py - 1.5f * sz + bob}, {2.4f * sz, 2.4f * sz}, shade(c, -10));
+            DrawRectangleV({px - 0.9f * sz, py - 3.0f * sz + bob}, {1.8f * sz, 1.6f * sz}, shade(c, 20));
+            DrawLineV({px - 1.2f * sz, py - 1.0f * sz + bob}, {px - 2.2f * sz, py + 0.8f * sz}, shade(c, -30));
+            DrawLineV({px + 1.2f * sz, py - 1.0f * sz + bob}, {px + 2.2f * sz, py + 0.8f * sz}, shade(c, -30));
+            DrawLineV({px + 1.2f * sz, py + 0.6f * sz}, {px + 2.6f * sz, py - 1.6f * sz}, shade(c, -40));
+            break;
+        }
+        case BodyPlan::Bird: {
+            // Chim bay trên cao: bóng dưới đất, thân nâng lên, đôi cánh vỗ
+            float lift = 4.0f + std::sin(phase * 0.3f) * 0.8f;
+            DrawEllipse(static_cast<int>(px), static_cast<int>(py), 1.6f * sz + 0.5f, 0.7f * sz + 0.3f, Color{0, 0, 0, 70});
+            float flap = std::sin(phase * 1.6f) * 1.5f * sz + 0.4f;
+            Color wing = shade(c, -20);
+            DrawTriangle({px, py - lift}, {px - 2.8f * sz - 0.8f, py - lift - flap}, {px - 0.6f, py - lift + 0.5f}, wing);
+            DrawTriangle({px, py - lift}, {px + 0.6f, py - lift + 0.5f}, {px + 2.8f * sz + 0.8f, py - lift - flap}, wing);
+            DrawCircleV({px, py - lift}, 0.9f * sz + 0.4f, c);
+            break;
+        }
+        case BodyPlan::Fish: {
+            // Cá bơi dưới nước: thân bầu dục, đuôi đong đưa, hơi trong suốt
+            float wig = std::sin(phase * 1.3f) * 0.8f;
+            Color fc{c.r, c.g, c.b, 210};
+            DrawEllipse(static_cast<int>(px), static_cast<int>(py), 2.0f * sz + 0.5f, 0.9f * sz + 0.3f, fc);
+            DrawTriangle({px - 1.8f * sz, py}, {px - 3.2f * sz - 0.4f, py - 1.1f * sz + wig}, {px - 3.2f * sz - 0.4f, py + 1.1f * sz + wig}, fc);
+            if (sd.size > 1.0f) DrawTriangle({px - 0.3f, py - 0.8f * sz}, {px + 0.6f * sz, py - 0.8f * sz}, {px, py - 2.0f * sz}, shade(c, -30)); // vây lưng cá mập
+            break;
+        }
+        case BodyPlan::Bat: {
+            float flap = std::sin(phase * 2.2f) * 1.6f;
+            Color wing = shade(c, -15);
+            DrawTriangle({px, py}, {px - 3.0f, py - 1.0f - flap}, {px - 0.5f, py + 0.8f}, wing);
+            DrawTriangle({px, py}, {px + 0.5f, py + 0.8f}, {px + 3.0f, py - 1.0f - flap}, wing);
+            DrawCircleV({px, py}, 1.0f, c);
+            DrawPixelV({px - 0.4f, py - 0.4f}, Color{255, 80, 60, 255});
+            break;
+        }
+        case BodyPlan::Spider: {
+            for (int k = 0; k < 4; ++k) {
+                float a = 0.5f + k * 0.45f + std::sin(phase + k) * 0.15f * tr.moving;
+                DrawLineV({px, py}, {px - std::cos(a) * 2.6f * sz - 0.5f, py + std::sin(a - 1.2f) * 2.0f * sz}, shade(c, -20));
+                DrawLineV({px, py}, {px + std::cos(a) * 2.6f * sz + 0.5f, py + std::sin(a - 1.2f) * 2.0f * sz}, shade(c, -20));
+            }
+            DrawCircleV({px, py}, 1.3f * sz + 0.3f, c);
+            DrawPixelV({px - 0.3f, py - 0.8f}, Color{255, 60, 60, 255});
+            break;
+        }
+        case BodyPlan::Reptile: {
+            // Cá sấu: thân dài sát đất, đuôi, mõm dài
+            DrawRectangleV({px - 3.0f * sz, py - 0.7f * sz}, {6.0f * sz, 1.4f * sz}, shade(c, -10));
+            DrawTriangle({px - 3.0f * sz, py - 0.7f * sz}, {px - 5.0f * sz, py}, {px - 3.0f * sz, py + 0.7f * sz}, shade(c, -25));
+            DrawRectangleV({px + 3.0f * sz, py - 0.4f * sz}, {1.6f * sz, 0.8f * sz}, shade(c, 10));
+            DrawPixelV({px + 2.8f * sz, py - 0.8f * sz}, Color{230, 220, 60, 255});
+            break;
+        }
+        case BodyPlan::Giant: {
+            // Voi ma mút: thân to lông dày, ngà trắng, vòi
+            DrawRectangleV({px - 2.6f * sz, py - 1.6f * sz + bob}, {5.2f * sz, 3.0f * sz}, shade(c, -15));
+            DrawRectangleV({px + 2.0f * sz, py - 2.4f * sz + bob}, {1.8f * sz, 2.0f * sz}, c);
+            DrawLineV({px + 3.6f * sz, py - 0.6f * sz + bob}, {px + 4.4f * sz, py - 1.6f * sz + bob}, Color{245, 240, 225, 255});
+            DrawLineV({px + 3.0f * sz, py - 0.4f * sz + bob}, {px + 3.2f * sz, py + 1.2f * sz + bob}, shade(c, -30));
+            break;
+        }
+        default: {
+            // Dạng thú bốn chân: thân ngang + đầu
+            DrawRectangleV({px - 2.2f * sz, py - 1.0f * sz + bob}, {4.4f * sz, 2.4f * sz}, shade(c, -15));
+            DrawRectangleV({px + 1.4f * sz, py - 2.0f * sz + bob}, {1.8f * sz, 1.8f * sz}, c);
+            if (b.species == sp::Boar) DrawPixelV({px + 3.2f * sz, py - 0.6f * sz + bob}, Color{245, 240, 225, 255}); // nanh
+            if (b.species == sp::Fox) DrawLineV({px - 2.2f * sz, py}, {px - 4.0f * sz, py - 1.4f * sz}, Color{240, 150, 70, 255}); // đuôi xù
+            break;
+        }
+        }
+        if (so.group >= 0 && sd.plan != BodyPlan::Humanoid) DrawRectangleV({px - 0.5f, py - 2.8f * sz}, {1, 1}, groupColor(sim, so.group));
+        if (b.sleeping) DrawRectangleV({px + 2, py - 5}, {1.2f, 1.2f}, Color{200, 200, 255, 200});
+        if (so.role == Role::Leader) DrawRectangleV({px - 1, py - 5 * sz}, {2, 1}, GOLD);
     }
 }
 
@@ -547,7 +730,7 @@ void Renderer::drawOverlay(Simulation& sim, const Camera2D& cam, const RenderOpt
         DrawRectangle(static_cast<int>(sp.x - 10), static_cast<int>(sp.y - 2), 20, 2, Color{0, 0, 0, 150});
         DrawRectangle(static_cast<int>(sp.x - 10), static_cast<int>(sp.y - 2), static_cast<int>(20 * m.intellect), 2, SKYBLUE);
     };
-    if (opt.debugThoughts && cam.zoom >= 1.5f) {
+    if (opt.debugThoughts && cam.zoom >= 1.5f && opt.layer != Layer::Underground) {
         int shown = 0;
         for (Entity e : sim.agents) {
             if (shown > 60) break;

@@ -117,6 +117,13 @@ Entity Simulation::spawnCreature(int sp, Vec2 pos, const Genome* genome, Entity 
     b.hp = b.maxHp;
     b.damage = sd.baseDamage * (0.6f + g[Gene::Strength] * 0.8f) * bodySize;
     b.speed = sd.baseSpeed * (0.6f + g[Gene::Speed] * 0.8f);
+    // Gen tự tạo (cấy ghép / đột biến): biểu hiện lên cơ thể
+    if (!sd.customGenes.empty()) {
+        b.maxHp *= 1.0f + 0.6f * sd.geneBonus(GeneEffect::Vitality) + 0.5f * sd.geneBonus(GeneEffect::Armor);
+        b.damage *= 1.0f + 0.6f * sd.geneBonus(GeneEffect::Muscle) + 0.9f * sd.geneBonus(GeneEffect::Venom);
+        b.speed *= std::max(0.3f, 1.0f + 0.4f * sd.geneBonus(GeneEffect::Agility) - 0.15f * sd.geneBonus(GeneEffect::Armor));
+        b.hp = b.maxHp;
+    }
     (void)sz;
     if (mother == NullEntity) b.ageTicks = static_cast<long>(sd.adultYears * kTicksPerYear * rng.range(1.0f, 2.0f)); // sinh vật được "thả" là con trưởng thành
     b.hunger = rng.range(0.1f, 0.3f);
@@ -235,7 +242,8 @@ void Simulation::metabolism() {
         float maxAge = sd.maxAgeYears * (0.7f + g[Gene::Longevity] * 0.6f) * kTicksPerYear;
         if (b.ageTicks > maxAge && rng.chance(0.002f)) { kill(e, 0); continue; }
         // Đói & mệt
-        b.hunger += (b.sleeping ? 0.0005f : 0.0010f) * (0.8f + sd.size * 0.2f) * (0.7f + g[Gene::Size] * 0.6f) * popPressure;
+        float photo = sd.customGenes.empty() ? 0.0f : std::min(0.7f, 0.5f * sd.geneBonus(GeneEffect::Photosynthesis)) * (sd.habitat == Habitat::Cave ? 0.0f : 1.0f);
+        b.hunger += (b.sleeping ? 0.0005f : 0.0010f) * (0.8f + sd.size * 0.2f) * (0.7f + g[Gene::Size] * 0.6f) * popPressure * (1.0f - photo);
         if (!b.sleeping) b.fatigue += 0.0007f;
         b.fatigue = std::min(b.fatigue, 1.0f);
         if (b.hunger >= 1.0f) { b.hunger = 1.0f; b.hp -= 0.4f; if (b.hp <= 0) { kill(e, 1); continue; } }
@@ -344,6 +352,7 @@ void Simulation::step() {
     thinkList_.clear();
     for (Entity e : agents) {
         Mind& m = reg.get<Mind>(e);
+        if (m.possessed) continue;   // người chơi đang điều khiển: không tự suy nghĩ
         if (m.nextThink <= tick) {
             thinkList_.push_back(e);
             m.nextThink = tick + m.thinkInterval;
@@ -354,7 +363,8 @@ void Simulation::step() {
 
     // ---- ACT (tuần tự) ----
     size_t n = agents.size();
-    for (size_t i = 0; i < n; ++i) Brain::act(*this, agents[i]);
+    for (size_t i = 0; i < n; ++i)
+        if (!reg.get<Mind>(agents[i]).possessed) Brain::act(*this, agents[i]);
 
     // ---- Vật lý: vật thể bay/lăn, rồi xử lý các vụ nổ do hoá học sinh ra ----
     physics.step(*this);

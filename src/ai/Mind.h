@@ -110,6 +110,7 @@ struct Mind {
     int lastDiscovery = -1;
     long lastDiscoveryTick = -100000;
     char thought[96] = "";                  // câu "suy nghĩ" hiển thị cho người chơi
+    bool possessed = false;                 // người chơi đang điều khiển (góc nhìn thứ nhất) → AI tạm nghỉ
 
     Sapience sapience() const { return sapienceOf(intellect); }
     void think(const char* fmt, ...) WB_PRINTF(2, 3);

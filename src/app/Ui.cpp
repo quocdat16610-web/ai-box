@@ -102,6 +102,8 @@ void startWorld(App& app) {
 #if defined(PLATFORM_ANDROID)
     cfg.maxPopulation = 3000; // điện thoại: giới hạn dân số thấp hơn để giữ 60 FPS
 #endif
+    if (app.sim) fpExit(app.fp, *app.sim);
+    fpRelease(app.fp);
     app.sim = std::make_unique<Simulation>(cfg);
     setupScenario(*app.sim, app.scenario);
     app.renderer.init(*app.sim);
@@ -374,6 +376,11 @@ void drawCreaturePanel(App& app, Rectangle r) {
     w.gap();
     w.line(std::string("Suy nghĩ: \"") + m.thought + "\"", Color{255, 230, 150, 255});
     w.line(fmt("Trí tuệ %.2f — %s · Tính cách: %s", m.intellect, sapienceName(m.sapience()), m.pers.archetype()));
+    if (!sd.customGenes.empty()) {
+        std::string cg;
+        for (const CustomGene& c : sd.customGenes) { if (!cg.empty()) cg += ", "; cg += c.name + " (" + geneEffectName(c.effect) + ")"; }
+        w.wrapped(std::string(sd.engineered ? "Loài nhân tạo · gen: " : "Gen đột biến: ") + cg, Color{255, 200, 255, 255});
+    }
     w.meter("Máu", b.hp / b.maxHp, Color{220, 70, 70, 255});
     w.meter("Đói", b.hunger, Color{230, 160, 60, 255});
     w.meter("Mệt", b.fatigue, Color{150, 150, 230, 255});
@@ -432,8 +439,18 @@ void drawCreaturePanel(App& app, Rectangle r) {
                inv.food, inv.wood, inv.stone, inv.matTotal()), kMuted);
     if (m.lastDiscovery >= 0 && sim.tick - m.lastDiscoveryTick < kTicksPerYear * 3)
         w.line(std::string("Vừa học được: ") + techDef(m.lastDiscovery).name, Color{255, 220, 90, 255});
-    // Nút theo dõi
+    // Nhìn qua mắt sinh vật / nhập vai điều khiển nó
     float bh = 34 * app.uiScale;
+    {
+        float by = r.y + r.height - 2 * bh - 14 * app.uiScale, bw = (r.width - 30 * app.uiScale) / 2;
+        if (button({r.x + 10 * app.uiScale, by, bw, bh}, "Nhìn qua mắt")) fpEnter(app.fp, sim, e);
+        if (button({r.x + r.width / 2 + 5 * app.uiScale, by, bw, bh}, "Điều khiển")) {
+            fpEnter(app.fp, sim, e);
+            app.fp.control = true;
+            sim.reg.get<Mind>(e).possessed = true;
+        }
+    }
+    // Nút theo dõi
     if (button({r.x + 10 * app.uiScale, r.y + r.height - bh - 8 * app.uiScale, (r.width - 30 * app.uiScale) / 2, bh}, "Theo dõi")) {
         const Transform& tr = sim.reg.get<Transform>(e);
         app.cam.target = {tr.pos.x * kTileWorld, tr.pos.y * kTileWorld};
@@ -666,6 +683,10 @@ void drawHud(App& app) {
         }
         tx += toolW + 4 * s;
     }
+    if (app.category == ToolCategory::Life) {
+        if (button({tx, rowY2, toolW * 1.6f, bh}, "Phòng thí nghiệm gen", app.lab.open, Color{120, 70, 140, 255})) { app.lab.open = true; app.lab.hasDraft = false; }
+        tx += toolW * 1.6f + 4 * s;
+    }
     if (app.category == ToolCategory::Inspect) {
         if (portrait) {
             if (button({tx, rowY2, toolW, bh}, "Biên niên", app.panel == SidePanel::Chronicle))
@@ -681,9 +702,15 @@ void drawHud(App& app) {
             if (button({tx, rowY2, toolW, bh}, std::string("Lớp: ") + layerName(app.opt.layer), app.opt.layer != Layer::Normal))
                 app.opt.layer = static_cast<Layer>((static_cast<int>(app.opt.layer) + 1) % static_cast<int>(Layer::Count));
             tx += toolW + 4 * s;
+            if (button({tx, rowY2, toolW, bh}, "Lòng đất", app.opt.layer == Layer::Underground))
+                app.opt.layer = app.opt.layer == Layer::Underground ? Layer::Normal : Layer::Underground;
+            tx += toolW + 4 * s;
         } else {
             if (button({tx, rowY2, toolW, bh}, "Hoá học", app.panel == SidePanel::Chemistry))
                 app.panel = app.panel == SidePanel::Chemistry ? SidePanel::None : SidePanel::Chemistry;
+            tx += toolW + 4 * s;
+            if (button({tx, rowY2, toolW, bh}, "Lòng đất", app.opt.layer == Layer::Underground))
+                app.opt.layer = app.opt.layer == Layer::Underground ? Layer::Normal : Layer::Underground;
             tx += toolW + 4 * s;
             ui::drawText(app.globe ? "Kéo: xoay hành tinh · chạm: hạ xuống điểm đó · chụm/lăn chuột: phóng to (đủ gần sẽ về bản đồ)"
                                    : "Chạm sinh vật: xem suy nghĩ · chạm lãnh thổ: nền văn minh · kéo: di chuyển · thu nhỏ hết: quả địa cầu",
@@ -715,6 +742,473 @@ void drawHud(App& app) {
         case SidePanel::Chemistry: drawChemistryPanel(app, r); break;
         default: break;
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Góc nhìn thứ nhất: nhập liệu + HUD
+// ---------------------------------------------------------------------------
+void fpAction(App& app, Brain::PlayerAct act) {
+    FirstPerson& fp = app.fp;
+    fp.msg = Brain::playerAction(*app.sim, fp.who, act, fpFacing(fp));
+    fp.msgTime = static_cast<float>(GetTime());
+}
+
+void handleFpInput(App& app) {
+    Simulation& sim = *app.sim;
+    FirstPerson& fp = app.fp;
+    if (!sim.reg.valid(fp.who) || sim.reg.get<Body>(fp.who).dead) {   // sinh vật đã chết → về bản đồ
+        fpExit(fp, sim);
+        app.panel = SidePanel::Chronicle;
+        return;
+    }
+    float dt = GetFrameTime();
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    auto inStickZone = [&](Vector2 p) { return p.x < W * 0.38f && p.y > H * 0.45f; };
+    Vector2 move{0, 0};
+    // ---- Cảm ứng / chuột: cần điều khiển ảo (trái dưới) + vuốt để nhìn ----
+    int touches = std::max(GetTouchPointCount(), IsMouseButtonDown(MOUSE_BUTTON_LEFT) || IsMouseButtonDown(MOUSE_BUTTON_RIGHT) ? 1 : 0);
+    bool stickSeen = false, lookSeen = false;
+    for (int i = 0; i < touches; ++i) {
+        Vector2 p = GetTouchPointCount() > 0 ? GetTouchPosition(i) : GetMousePosition();
+        if (overUi(app, p) && !fp.stick && !fp.looking) continue;
+        if (fp.control && (fp.stick ? (std::fabs(p.x - fp.stickPos.x) + std::fabs(p.y - fp.stickPos.y) < 200 * app.uiScale) : inStickZone(p)) && !stickSeen) {
+            if (!fp.stick) { fp.stick = true; fp.stickOrigin = p; }
+            fp.stickPos = p;
+            stickSeen = true;
+        } else if (!lookSeen) {
+            if (!fp.looking) { fp.looking = true; fp.lookLast = p; }
+            fp.yaw += (p.x - fp.lookLast.x) * 0.006f / app.uiScale;
+            fp.pitch = std::clamp(fp.pitch - (p.y - fp.lookLast.y) * 0.005f / app.uiScale, -1.2f, 1.0f);
+            fp.lookLast = p;
+            lookSeen = true;
+        }
+    }
+    if (!stickSeen) fp.stick = false;
+    if (!lookSeen) fp.looking = false;
+    if (fp.stick) {
+        float rad = 60 * app.uiScale;
+        move.x = std::clamp((fp.stickPos.x - fp.stickOrigin.x) / rad, -1.0f, 1.0f);
+        move.y = std::clamp((fp.stickPos.y - fp.stickOrigin.y) / rad, -1.0f, 1.0f);
+    }
+    // ---- Bàn phím (PC) ----
+    if (IsKeyDown(KEY_Q)) fp.yaw -= dt * 2.0f;
+    if (IsKeyDown(KEY_E) && !fp.control) fp.yaw += dt * 2.0f;
+    if (IsKeyDown(KEY_LEFT)) fp.yaw -= dt * 2.0f;
+    if (IsKeyDown(KEY_RIGHT)) fp.yaw += dt * 2.0f;
+    if (fp.control) {
+        if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) move.y -= 1;
+        if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) move.y += 1;
+        if (IsKeyDown(KEY_A)) move.x -= 1;
+        if (IsKeyDown(KEY_D)) move.x += 1;
+        if (IsKeyPressed(KEY_F) || IsKeyPressed(KEY_J)) fpAction(app, Brain::PlayerAct::Attack);
+        if (IsKeyPressed(KEY_E)) fpAction(app, Brain::PlayerAct::Eat);
+        if (IsKeyPressed(KEY_G)) fpAction(app, Brain::PlayerAct::Gather);
+        if (IsKeyPressed(KEY_B)) fpAction(app, Brain::PlayerAct::BuildHut);
+        float L = std::sqrt(move.x * move.x + move.y * move.y);
+        if (L > 0.05f) {
+            if (L > 1) { move.x /= L; move.y /= L; }
+            Vec2 fwd = fpFacing(fp), right{-fwd.y, fwd.x};
+            Body& b = sim.reg.get<Body>(fp.who);
+            float run = IsKeyDown(KEY_LEFT_SHIFT) ? 1.6f : 1.0f;
+            float step = b.speed * kTicksPerSecond * dt * run;   // tốc độ thật của sinh vật (ô/giây)
+            Vec2 dir = fwd * (-move.y * step) + right * (move.x * step);
+            Brain::playerMove(sim, fp.who, dir);
+            b.fatigue = std::min(1.0f, b.fatigue + dt * 0.004f * run);
+        } else sim.reg.get<Transform>(fp.who).moving = false;
+    }
+    if (IsKeyPressed(KEY_TAB) || IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_BACK)) fpExit(fp, sim);
+}
+
+void drawFpHud(App& app) {
+    Simulation& sim = *app.sim;
+    FirstPerson& fp = app.fp;
+    if (!sim.reg.valid(fp.who)) return;
+    float s = app.uiScale;
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    const Body& b = sim.reg.get<Body>(fp.who);
+    const Mind& m = sim.reg.get<Mind>(fp.who);
+    const Social& so = sim.reg.get<Social>(fp.who);
+    const Inventory& inv = sim.reg.get<Inventory>(fp.who);
+    const SpeciesDef& sd = sim.species[b.species];
+    // ---- Bảng trạng thái ----
+    float pw = std::min(420 * s, W * 0.55f);
+    Rectangle pr{8 * s, 8 * s, pw, 118 * s};
+    panel(pr, Color{10, 12, 18, 190});
+    Writer w{pr.x + 10 * s, pr.y + 6 * s, pw - 20 * s, 13 * s};
+    std::string head = so.name + " — " + sd.name;
+    if (so.group >= 0 && sim.group(so.group)) head += " · " + sim.groups[so.group].displayName();
+    w.line(head, kAccent);
+    w.meter("Máu", b.hp / b.maxHp, Color{220, 70, 70, 255});
+    w.meter("Đói", b.hunger, Color{230, 160, 60, 255});
+    w.meter("Mệt", b.fatigue, Color{150, 150, 230, 255});
+    if (fp.control) w.line(fmt("ĐANG ĐIỀU KHIỂN · mang: %d ăn, %d gỗ, %d đá, %d khác", inv.food, inv.wood, inv.stone, inv.matTotal()), Color{255, 220, 110, 255});
+    else w.line(std::string("Đang nghĩ: \"") + m.thought + "\"", Color{255, 230, 150, 255});
+    // ---- Bản đồ nhỏ ----
+    float ms = 120 * s;
+    Rectangle mr{W - ms - 10 * s, 10 * s, ms, ms};
+    panel(mr, Color{0, 0, 0, 160});
+    const Transform& tr = sim.reg.get<Transform>(fp.who);
+    const Texture2D& tex = sd.habitat == Habitat::Cave ? app.renderer.undergroundTexture(sim) : app.renderer.terrainTexture();
+    float span = 40;   // ô
+    float sx0 = std::clamp(tr.pos.x - span / 2, 0.0f, sim.world.width() - span), sy0 = std::clamp(tr.pos.y - span / 2, 0.0f, sim.world.height() - span);
+    DrawTexturePro(tex, {sx0 * kTilePx, sy0 * kTilePx, span * kTilePx, span * kTilePx}, mr, {0, 0}, 0, WHITE);
+    Vector2 dot{mr.x + (tr.pos.x - sx0) / span * ms, mr.y + (tr.pos.y - sy0) / span * ms};
+    Vec2 f = fpFacing(fp);
+    DrawLineEx(dot, {dot.x + f.x * 10 * s, dot.y + f.y * 10 * s}, 2 * s, YELLOW);
+    DrawCircleV(dot, 3 * s, RED);
+    // ---- Tâm ngắm ----
+    if (fp.control) {
+        DrawLineEx({W / 2.0f - 8 * s, H / 2.0f}, {W / 2.0f + 8 * s, H / 2.0f}, 2, Color{255, 255, 255, 180});
+        DrawLineEx({W / 2.0f, H / 2.0f - 8 * s}, {W / 2.0f, H / 2.0f + 8 * s}, 2, Color{255, 255, 255, 180});
+    }
+    // ---- Thông báo hành động ----
+    if (!fp.msg.empty() && GetTime() - fp.msgTime < 3.0) {
+        float fs = 16 * s, tw = ui::measureText(fp.msg, fs);
+        DrawRectangleRounded({(W - tw) / 2 - 8 * s, H * 0.62f, tw + 16 * s, fs + 10 * s}, 0.3f, 4, Color{0, 0, 0, 170});
+        ui::drawText(fp.msg, (W - tw) / 2, H * 0.62f + 5 * s, fs, Color{255, 235, 170, 255});
+    }
+    // ---- Nút ----
+    float bh = 44 * s, bw = 118 * s, gap = 6 * s;
+    float by = H - bh - 10 * s;
+    if (button({W - bw - 10 * s, by, bw, bh}, "Thoát")) { fpExit(fp, sim); return; }
+    if (button({W - 2 * bw - 10 * s - gap, by, bw, bh}, fp.control ? "Để AI tự quyết" : "Điều khiển", fp.control)) {
+        fp.control = !fp.control;
+        Mind& mm = sim.reg.get<Mind>(fp.who);
+        mm.possessed = fp.control;
+        if (!fp.control) { mm.needReplan = true; mm.nextThink = sim.tick; }
+    }
+    // tốc độ thời gian
+    for (int i = 0; i < 3; ++i)
+        if (button({W - ms - 10 * s + i * (ms / 3), ms + 16 * s, ms / 3 - 3 * s, 30 * s}, kSpeedLabels[i], app.speedIdx == i)) app.speedIdx = i;
+    if (fp.control) {
+        const char* names[] = {"Tấn công", "Ăn", "Thu thập", "Dựng lều"};
+        const Brain::PlayerAct acts[] = {Brain::PlayerAct::Attack, Brain::PlayerAct::Eat, Brain::PlayerAct::Gather, Brain::PlayerAct::BuildHut};
+        int n = sd.dexterous ? 4 : 2;
+        for (int i = 0; i < n; ++i)
+            if (button({W - bw - 10 * s - (i % 2) * (bw + gap), by - (1 + i / 2) * (bh + gap), bw, bh}, names[i], false, Color{90, 60, 50, 235})) fpAction(app, acts[i]);
+        // Cần điều khiển ảo
+        float rad = 60 * s;
+        Vector2 o = fp.stick ? fp.stickOrigin : Vector2{20 * s + rad, H - 20 * s - rad};
+        DrawCircleV(o, rad, Color{255, 255, 255, 40});
+        DrawCircleLinesV(o, rad, Color{255, 255, 255, 120});
+        Vector2 k = fp.stick ? fp.stickPos : o;
+        float dx = k.x - o.x, dy = k.y - o.y, L = std::sqrt(dx * dx + dy * dy);
+        if (L > rad) { k.x = o.x + dx / L * rad; k.y = o.y + dy / L * rad; }
+        DrawCircleV(k, rad * 0.42f, Color{255, 255, 255, 120});
+        ui::drawText("WASD/cần ảo: đi · kéo: nhìn · F tấn công · E ăn · G thu thập · B dựng lều · Tab thoát", 10 * s, pr.y + pr.height + 6 * s, 11 * s, Color{230, 230, 240, 200});
+    } else {
+        ui::drawText("Kéo màn hình để nhìn quanh · bấm \"Điều khiển\" để nhập vai sinh vật này", 10 * s, pr.y + pr.height + 6 * s, 12 * s, Color{230, 230, 240, 210});
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phòng thí nghiệm gen
+// ---------------------------------------------------------------------------
+// Thanh trượt: kéo để chỉnh giá trị trong [lo, hi]
+bool slider(Rectangle r, float& v, float lo, float hi, const std::string& label, Color c) {
+    gApp->uiRects.push_back(r);
+    float s = gApp->uiScale;
+    float lw = r.width * 0.38f;
+    ui::drawText(label, r.x, r.y + (r.height - 12 * s) / 2, 12 * s, kText);
+    Rectangle tr{r.x + lw, r.y + r.height * 0.35f, r.width - lw - 44 * s, r.height * 0.3f};
+    DrawRectangleRounded(tr, 0.5f, 4, Color{0, 0, 0, 140});
+    float t = (v - lo) / (hi - lo);
+    DrawRectangleRounded({tr.x, tr.y, tr.width * clamp01(t), tr.height}, 0.5f, 4, c);
+    DrawCircleV({tr.x + tr.width * clamp01(t), tr.y + tr.height / 2}, r.height * 0.32f, RAYWHITE);
+    ui::drawText(fmt("%.2f", v), tr.x + tr.width + 6 * s, r.y + (r.height - 12 * s) / 2, 12 * s, kMuted);
+    Rectangle hit{tr.x - 8 * s, r.y, tr.width + 16 * s, r.height};
+    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && pointInRect(gApp->pressPos, hit)) {
+        float nt = clamp01((GetMousePosition().x - tr.x) / tr.width);
+        v = lo + nt * (hi - lo);
+        return true;
+    }
+    return false;
+}
+
+// Bộ chọn vòng: [<] nhãn [>]
+int cycler(Rectangle r, const std::string& label, int idx, int count) {
+    float bw = r.height;
+    if (button({r.x, r.y, bw, r.height}, "<")) idx = (idx + count - 1) % count;
+    if (button({r.x + r.width - bw, r.y, bw, r.height}, ">")) idx = (idx + 1) % count;
+    float fs = std::min(14 * gApp->uiScale, r.height * 0.45f);
+    std::string t = label;
+    while (t.size() > 4 && ui::measureText(t, fs) > r.width - 2 * bw - 8) { t.pop_back(); while (!t.empty() && (static_cast<unsigned char>(t.back()) & 0xC0) == 0x80) t.pop_back(); }
+    ui::drawText(t, r.x + (r.width - ui::measureText(t, fs)) / 2, r.y + (r.height - fs) / 2, fs, kText);
+    return idx;
+}
+
+// Ô nhập chữ (bàn phím PC; điện thoại dùng nút "tên ngẫu nhiên")
+void textField(Rectangle r, std::string& text, int id) {
+    GeneLab& L = gApp->lab;
+    gApp->uiRects.push_back(r);
+    bool focused = L.focus == id;
+    DrawRectangleRounded(r, 0.25f, 6, focused ? Color{60, 70, 100, 255} : kPanelLight);
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && pointInRect(GetMousePosition(), r) && pointInRect(gApp->pressPos, r)) L.focus = id;
+    if (focused) {
+        for (int ch = GetCharPressed(); ch > 0; ch = GetCharPressed()) {
+            if (text.size() > 40) continue;
+            // mã hoá UTF-8 (gõ được tiếng Việt có dấu nếu bộ gõ hệ điều hành gửi ký tự Unicode)
+            if (ch < 0x80) text += static_cast<char>(ch);
+            else if (ch < 0x800) { text += static_cast<char>(0xC0 | (ch >> 6)); text += static_cast<char>(0x80 | (ch & 0x3F)); }
+            else { text += static_cast<char>(0xE0 | (ch >> 12)); text += static_cast<char>(0x80 | ((ch >> 6) & 0x3F)); text += static_cast<char>(0x80 | (ch & 0x3F)); }
+        }
+        if (IsKeyPressed(KEY_BACKSPACE) && !text.empty()) {
+            text.pop_back();
+            while (!text.empty() && (static_cast<unsigned char>(text.back()) & 0xC0) == 0x80) text.pop_back();
+        }
+        if (IsKeyPressed(KEY_ENTER)) L.focus = 0;
+    }
+    float fs = std::min(15 * gApp->uiScale, r.height * 0.5f);
+    std::string shown = text + (focused && static_cast<int>(GetTime() * 2) % 2 ? "|" : "");
+    ui::drawText(shown, r.x + 8, r.y + (r.height - fs) / 2, fs, kText);
+}
+
+std::string randomSpeciesName(Rng& rng) {
+    static const char* a[] = {"Kra", "Vel", "Zor", "Mi", "Tha", "Ul", "Gro", "Sy", "Ae", "Bru", "Qua", "Lo", "Dre", "Nym", "Ox"};
+    static const char* b[] = {"nax", "ri", "thul", "ven", "mo", "rak", "lith", "pha", "dor", "sa", "gul", "ix", "ra", "ne", "bor"};
+    static const char* c[] = {"", "", "ia", "on", "us", "a", "ek", "oth"};
+    std::string n = std::string(a[rng.irange(0, 14)]) + b[rng.irange(0, 14)] + c[rng.irange(0, 7)];
+    return n;
+}
+
+const char* planName(BodyPlan p) {
+    static const char* n[] = {"Dáng người", "Bốn chân", "Chim", "Cá", "Dơi", "Nhện", "Bò sát", "Khổng lồ", "Linh trưởng"};
+    return n[static_cast<int>(p)];
+}
+const char* habitatName(Habitat h) {
+    static const char* n[] = {"Trên cạn", "Dưới nước", "Trên trời", "Trong hang", "Lưỡng cư"};
+    return n[static_cast<int>(h)];
+}
+const char* dietName(Diet d) {
+    static const char* n[] = {"Ăn cỏ", "Ăn thịt", "Ăn tạp"};
+    return n[static_cast<int>(d)];
+}
+const char* socialName(SocialType t) {
+    static const char* n[] = {"Sống đơn độc", "Sống theo đàn", "Săn theo bầy", "Bộ tộc"};
+    return n[static_cast<int>(t)];
+}
+
+// Vẽ bản xem trước con vật theo hình dáng + màu + kích thước (to gấp nhiều lần sprite thật)
+void drawSpeciesPreview(const SpeciesDef& d, Rectangle r, float time) {
+    DrawRectangleRounded(r, 0.06f, 6, Color{30, 60, 40, 255});
+    DrawRectangle(static_cast<int>(r.x), static_cast<int>(r.y + r.height * 0.7f), static_cast<int>(r.width), static_cast<int>(r.height * 0.3f), Color{70, 120, 60, 255});
+    float k = std::min(r.width, r.height) / 18.0f * std::clamp(d.size, 0.3f, 2.2f) / 1.3f;
+    float cx = r.x + r.width / 2, cy = r.y + r.height * 0.68f;
+    Color c{d.r, d.g, d.b, 255};
+    auto sh = [](Color c, int v) { return Color{static_cast<unsigned char>(std::clamp(c.r + v, 0, 255)), static_cast<unsigned char>(std::clamp(c.g + v, 0, 255)), static_cast<unsigned char>(std::clamp(c.b + v, 0, 255)), 255}; };
+    float bob = std::sin(time * 4) * k * 0.15f;
+    if (d.geneBonus(GeneEffect::Glow) > 0) DrawCircleGradient(static_cast<int>(cx), static_cast<int>(cy - 2 * k), 6 * k, Color{d.r, d.g, d.b, 120}, Color{d.r, d.g, d.b, 0});
+    switch (d.plan) {
+    case BodyPlan::Humanoid: case BodyPlan::Primate:
+        DrawRectangleV({cx - 1.6f * k, cy - 3.2f * k + bob}, {3.2f * k, 3.2f * k}, d.plan == BodyPlan::Humanoid ? Color{90, 110, 170, 255} : sh(c, -20));
+        DrawRectangleV({cx - 1.1f * k, cy - 5.4f * k + bob}, {2.2f * k, 2.2f * k}, c);
+        DrawRectangleV({cx - 1.3f * k, cy}, {1.0f * k, 1.6f * k}, sh(c, -40));
+        DrawRectangleV({cx + 0.3f * k, cy}, {1.0f * k, 1.6f * k}, sh(c, -40));
+        break;
+    case BodyPlan::Bird: case BodyPlan::Bat: {
+        float flap = std::sin(time * 9) * 2.5f * k;
+        DrawTriangle({cx, cy - 4 * k}, {cx - 6 * k, cy - 4 * k - flap}, {cx - 1 * k, cy - 3 * k}, sh(c, -25));
+        DrawTriangle({cx, cy - 4 * k}, {cx + 1 * k, cy - 3 * k}, {cx + 6 * k, cy - 4 * k - flap}, sh(c, -25));
+        DrawCircleV({cx, cy - 4 * k}, 1.5f * k, c);
+        break;
+    }
+    case BodyPlan::Fish:
+        DrawEllipse(static_cast<int>(cx), static_cast<int>(cy - 3 * k), 4 * k, 1.8f * k, c);
+        DrawTriangle({cx - 3.6f * k, cy - 3 * k}, {cx - 6.5f * k, cy - 5 * k}, {cx - 6.5f * k, cy - 1 * k}, sh(c, -30));
+        break;
+    case BodyPlan::Spider:
+        for (int i = 0; i < 4; ++i) {
+            float a = 0.4f + i * 0.5f;
+            DrawLineEx({cx, cy - 1.5f * k}, {cx - std::cos(a) * 5 * k, cy - 1.5f * k + std::sin(a - 1.0f) * 3 * k}, k * 0.4f, sh(c, -30));
+            DrawLineEx({cx, cy - 1.5f * k}, {cx + std::cos(a) * 5 * k, cy - 1.5f * k + std::sin(a - 1.0f) * 3 * k}, k * 0.4f, sh(c, -30));
+        }
+        DrawCircleV({cx, cy - 1.5f * k}, 2 * k, c);
+        break;
+    case BodyPlan::Reptile:
+        DrawRectangleV({cx - 5 * k, cy - 1.6f * k}, {10 * k, 1.8f * k}, c);
+        DrawTriangle({cx - 5 * k, cy - 1.6f * k}, {cx - 8 * k, cy - 0.7f * k}, {cx - 5 * k, cy + 0.2f * k}, sh(c, -25));
+        DrawRectangleV({cx + 5 * k, cy - 1.3f * k}, {2.4f * k, 1.2f * k}, sh(c, 15));
+        break;
+    default: {   // bốn chân / khổng lồ
+        float g = d.plan == BodyPlan::Giant ? 1.3f : 1.0f;
+        DrawRectangleV({cx - 4 * k * g, cy - 3.4f * k * g + bob}, {8 * k * g, 3.4f * k * g}, sh(c, -15));
+        DrawRectangleV({cx + 3 * k * g, cy - 5 * k * g + bob}, {2.8f * k * g, 2.6f * k * g}, c);
+        for (int i = 0; i < 4; ++i) DrawRectangleV({cx - 3.6f * k * g + i * 2.2f * k * g, cy + bob}, {0.9f * k, 1.4f * k}, sh(c, -40));
+        if (d.plan == BodyPlan::Giant) DrawLineEx({cx + 5.5f * k * g, cy - 2.5f * k * g}, {cx + 7 * k * g, cy - 4 * k * g}, k * 0.5f, Color{245, 240, 225, 255});
+        break;
+    }
+    }
+    if (d.geneBonus(GeneEffect::Wings) > 0 && d.plan != BodyPlan::Bird && d.plan != BodyPlan::Bat) {
+        float flap = std::sin(time * 9) * 2 * k;
+        DrawTriangle({cx, cy - 4 * k}, {cx - 5 * k, cy - 7 * k - flap}, {cx + 1 * k, cy - 4.5f * k}, Color{240, 240, 255, 200});
+    }
+    if (d.geneBonus(GeneEffect::Armor) > 0) DrawRectangleLinesEx({cx - 4 * k, cy - 5 * k, 8 * k, 5 * k}, k * 0.25f, Color{200, 200, 210, 180});
+    if (d.geneBonus(GeneEffect::Venom) > 0) DrawCircleV({cx + 4.5f * k, cy - 3 * k}, k * 0.6f, Color{150, 255, 60, 255});
+}
+
+void labResetDraft(GeneLab& L, Simulation& sim) {
+    L.draft = sim.species[L.base];
+    L.draft.name = sim.species[sim.species.root(L.base)].name + " " + randomSpeciesName(sim.rng);
+    L.draft.population = 0;
+    L.hasDraft = true;
+}
+
+void drawGeneLab(App& app) {
+    Simulation& sim = *app.sim;
+    GeneLab& L = app.lab;
+    float s = app.uiScale;
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    if (!L.hasDraft) labResetDraft(L, sim);
+    SpeciesDef& d = L.draft;
+    int nsp = sim.species.count();
+    L.base = std::min(L.base, nsp - 1); L.donor = std::min(L.donor, nsp - 1);
+    Rectangle full{8 * s, 8 * s, W - 16 * s, H - 16 * s};
+    panel(full, Color{14, 16, 24, 245});
+    ui::drawText("Phòng thí nghiệm gen — cấy ghép, tạo gen mới, chỉnh ngoại hình → loài mới", full.x + 12 * s, full.y + 10 * s, 17 * s, kAccent);
+    if (button({full.x + full.width - 44 * s, full.y + 6 * s, 38 * s, 32 * s}, "x")) { L.open = false; return; }
+    bool wide = W > H;
+    float top = full.y + 44 * s;
+    // ---- Cột xem trước ----
+    float leftW = wide ? std::min(330 * s, full.width * 0.36f) : full.width - 24 * s;
+    float prevH = wide ? std::min(220 * s, (full.height - 60 * s) * 0.45f) : std::min(150 * s, H * 0.18f);
+    Rectangle pv{full.x + 12 * s, top, leftW, prevH};
+    drawSpeciesPreview(d, pv, static_cast<float>(GetTime()));
+    float y = pv.y + pv.height + 8 * s;
+    float bh = 36 * s;
+    textField({pv.x, y, leftW - bh * 2.6f - 6 * s, bh}, d.name, 1);
+    if (button({pv.x + leftW - bh * 2.6f, y, bh * 2.6f, bh}, "Tên ngẫu nhiên")) d.name = sim.species[sim.species.root(L.base)].name + " " + randomSpeciesName(sim.rng);
+    y += bh + 6 * s;
+    Writer w{pv.x, y, leftW, 12 * s};
+    w.line(fmt("%s · %s · %s · cỡ %.2f", planName(d.plan), habitatName(d.habitat), dietName(d.diet), d.size), kMuted);
+    w.line(std::string(d.dexterous ? "Có đôi tay khéo léo" : "Không có tay khéo") + (d.monster ? " · Quái vật" : "") + " · " + socialName(d.social), kMuted);
+    std::string cg;
+    for (const CustomGene& g : d.customGenes) { if (!cg.empty()) cg += ", "; cg += g.name + " (" + geneEffectName(g.effect) + fmt(" %.1f)", g.strength); }
+    if (!cg.empty()) w.wrapped("Gen tự tạo: " + cg, Color{255, 200, 255, 255}, pv.y + (wide ? full.height - 150 * s : prevH + 140 * s));
+    float createY = wide ? full.y + full.height - bh * 1.3f - 12 * s : y + 3 * bh;
+    if (button({pv.x, createY, leftW, bh * 1.3f}, "TẠO LOÀI MỚI & THẢ VÀO THẾ GIỚI", false, Color{60, 140, 80, 255})) {
+        SpeciesDef nd = d;
+        nd.parent = L.base;
+        nd.donor = L.donor;
+        nd.engineered = true;
+        nd.bornTick = sim.tick;
+        nd.population = 0;
+        nd.capShare = nd.dexterous && !nd.monster ? 0.3f : std::clamp(0.03f / std::max(0.4f, nd.size), 0.006f, 0.06f);
+        if (nd.plan == BodyPlan::Humanoid && !nd.dexterous) nd.plan = BodyPlan::Primate;
+        int id = sim.species.add(nd);
+        app.spawnSpecies = id;
+        app.tool = Power::Spawn;
+        app.category = ToolCategory::Life;
+        sim.chronicle.add(sim.tick, EventKind::Evolution,
+                          "Thần linh tạo ra loài mới \"" + nd.name + "\" từ " + sim.species[L.base].name + (L.donor != L.base ? " × " + sim.species[L.donor].name : "") +
+                              (nd.customGenes.empty() ? "" : " mang " + std::to_string(nd.customGenes.size()) + " gen tự tạo"));
+        L.open = false;
+        L.hasDraft = false;
+        app.panel = SidePanel::Species;
+        return;
+    }
+    // ---- Cột chỉnh sửa (thẻ) ----
+    Rectangle ed = wide ? Rectangle{pv.x + leftW + 14 * s, top, full.x + full.width - (pv.x + leftW + 14 * s) - 12 * s, full.height - 56 * s}
+                        : Rectangle{full.x + 12 * s, createY + bh * 1.3f + 10 * s, full.width - 24 * s, full.y + full.height - (createY + bh * 1.3f + 10 * s) - 10 * s};
+    const char* tabs[] = {"Cấy ghép", "Bộ gen", "Ngoại hình", "Gen mới"};
+    float tw = (ed.width - 3 * 6 * s) / 4;
+    for (int i = 0; i < 4; ++i)
+        if (button({ed.x + i * (tw + 6 * s), ed.y, tw, bh}, tabs[i], L.tab == i)) L.tab = i;
+    float ey = ed.y + bh + 10 * s, rowH = std::min(34 * s, (ed.height - bh - 20 * s) / 14.0f);
+    float ew = ed.width;
+    switch (L.tab) {
+    case 0: {   // ---- Cấy ghép gen giữa hai loài ----
+        ui::drawText("Loài gốc (bản nháp bắt đầu từ loài này):", ed.x, ey, 12 * s, kMuted); ey += 16 * s;
+        int nb = cycler({ed.x, ey, ew, rowH}, sim.species[L.base].name, L.base, nsp);
+        if (nb != L.base) { L.base = nb; labResetDraft(L, sim); }
+        ey += rowH + 10 * s;
+        ui::drawText("Loài cho gen:", ed.x, ey, 12 * s, kMuted); ey += 16 * s;
+        L.donor = cycler({ed.x, ey, ew, rowH}, sim.species[L.donor].name, L.donor, nsp);
+        ey += rowH + 12 * s;
+        const SpeciesDef& D = sim.species[L.donor];
+        float hw = (ew - 6 * s) / 2;
+        auto act = [&](int i, const char* label) { return button({ed.x + (i % 2) * (hw + 6 * s), ey + (i / 2) * (rowH + 6 * s), hw, rowH}, label); };
+        if (act(0, "Lai 50/50 toàn bộ gen")) for (int g = 0; g < kGeneCount; ++g) d.baseGenome.g[g] = (d.baseGenome.g[g] + D.baseGenome.g[g]) * 0.5f;
+        if (act(1, "Lấy gen trí tuệ + khéo tay")) { d.baseGenome[Gene::Intelligence] = D.baseGenome[Gene::Intelligence]; d.baseGenome[Gene::Dexterity] = D.baseGenome[Gene::Dexterity]; d.dexterous = d.dexterous || D.dexterous; }
+        if (act(2, "Lấy hình dáng cơ thể")) d.plan = D.plan;
+        if (act(3, "Lấy môi trường sống")) d.habitat = D.habitat;
+        if (act(4, "Lấy chế độ ăn")) d.diet = D.diet;
+        if (act(5, "Lấy màu & kích thước")) { d.r = D.r; d.g = D.g; d.b = D.b; d.size = D.size; }
+        if (act(6, "Lấy sức mạnh, tốc độ")) { d.baseHp = D.baseHp; d.baseDamage = D.baseDamage; d.baseSpeed = D.baseSpeed; d.baseGenome[Gene::Strength] = D.baseGenome[Gene::Strength]; d.baseGenome[Gene::Speed] = D.baseGenome[Gene::Speed]; }
+        if (act(7, "Lấy các gen tự tạo")) for (const CustomGene& g : D.customGenes) addCustomGene(d, g);
+        if (act(8, "Lấy khả năng chịu nhiệt")) { d.baseGenome[Gene::ColdResist] = D.baseGenome[Gene::ColdResist]; d.baseGenome[Gene::HeatResist] = D.baseGenome[Gene::HeatResist]; }
+        if (act(9, "Đột biến ngẫu nhiên")) {
+            for (float& v : d.baseGenome.g) v = clamp01(v + sim.rng.gauss(0.15f));
+            d.r = static_cast<uint8_t>(std::clamp(d.r + sim.rng.irange(-60, 60), 20, 255));
+            d.g = static_cast<uint8_t>(std::clamp(d.g + sim.rng.irange(-60, 60), 20, 255));
+            d.b = static_cast<uint8_t>(std::clamp(d.b + sim.rng.irange(-60, 60), 20, 255));
+            d.size = std::clamp(d.size * sim.rng.range(0.7f, 1.4f), 0.15f, 3.0f);
+        }
+        ey += 5 * (rowH + 6 * s) + 8 * s;
+        w = Writer{ed.x, ey, ew, 12 * s};
+        w.wrapped(std::string("Khoảng cách di truyền với loài gốc: ") + fmt("%.2f", Genome::distance(d.baseGenome, sim.species[L.base].baseGenome)) +
+                  ". Loài mới sẽ tiếp tục tự tiến hoá, có thể đột biến ra gen mới và phân nhánh thành các loài khác.", kMuted);
+        break;
+    }
+    case 1: {   // ---- Từng gen ----
+        for (int g = 0; g < kGeneCount; ++g) {
+            slider({ed.x, ey, ew, rowH}, d.baseGenome.g[g], 0.0f, 1.0f, geneName(static_cast<Gene>(g)), Color{120, 200, 255, 255});
+            ey += rowH + 2 * s;
+        }
+        break;
+    }
+    case 2: {   // ---- Ngoại hình & sinh thái ----
+        float rr = d.r, gg = d.g, bb = d.b;
+        slider({ed.x, ey, ew, rowH}, rr, 0, 255, "Màu đỏ", Color{230, 80, 80, 255}); ey += rowH + 2 * s;
+        slider({ed.x, ey, ew, rowH}, gg, 0, 255, "Màu lục", Color{80, 220, 100, 255}); ey += rowH + 2 * s;
+        slider({ed.x, ey, ew, rowH}, bb, 0, 255, "Màu lam", Color{90, 140, 255, 255}); ey += rowH + 2 * s;
+        d.r = static_cast<uint8_t>(rr); d.g = static_cast<uint8_t>(gg); d.b = static_cast<uint8_t>(bb);
+        slider({ed.x, ey, ew, rowH}, d.size, 0.15f, 3.0f, "Kích thước", Color{230, 200, 90, 255}); ey += rowH + 2 * s;
+        slider({ed.x, ey, ew, rowH}, d.baseSpeed, 0.04f, 0.3f, "Tốc độ gốc", Color{230, 200, 90, 255}); ey += rowH + 2 * s;
+        slider({ed.x, ey, ew, rowH}, d.baseHp, 5, 300, "Máu gốc", Color{230, 90, 90, 255}); ey += rowH + 2 * s;
+        slider({ed.x, ey, ew, rowH}, d.baseDamage, 0.5f, 30, "Sát thương gốc", Color{230, 90, 90, 255}); ey += rowH + 6 * s;
+        d.plan = static_cast<BodyPlan>(cycler({ed.x, ey, ew, rowH}, std::string("Hình dáng: ") + planName(d.plan), static_cast<int>(d.plan), 9)); ey += rowH + 4 * s;
+        d.habitat = static_cast<Habitat>(cycler({ed.x, ey, ew, rowH}, std::string("Môi trường: ") + habitatName(d.habitat), static_cast<int>(d.habitat), 5)); ey += rowH + 4 * s;
+        d.diet = static_cast<Diet>(cycler({ed.x, ey, ew, rowH}, std::string("Thức ăn: ") + dietName(d.diet), static_cast<int>(d.diet), 3)); ey += rowH + 4 * s;
+        d.social = static_cast<SocialType>(cycler({ed.x, ey, ew, rowH}, std::string("Xã hội: ") + socialName(d.social), static_cast<int>(d.social), 4)); ey += rowH + 6 * s;
+        float hw = (ew - 6 * s) / 2;
+        if (button({ed.x, ey, hw, rowH}, d.dexterous ? "Tay khéo: CÓ" : "Tay khéo: không", d.dexterous)) {
+            d.dexterous = !d.dexterous;
+            d.baseGenome[Gene::Dexterity] = d.dexterous ? std::max(0.7f, d.baseGenome[Gene::Dexterity]) : std::min(0.3f, d.baseGenome[Gene::Dexterity]);
+            if (d.dexterous && d.social != SocialType::Tribal) d.social = SocialType::Tribal;
+        }
+        if (button({ed.x + hw + 6 * s, ey, hw, rowH}, d.monster ? "Quái vật: CÓ" : "Quái vật: không", d.monster)) d.monster = !d.monster;
+        break;
+    }
+    case 3: {   // ---- Tạo gen mới tuỳ ý ----
+        ui::drawText("Tên gen:", ed.x, ey, 12 * s, kMuted); ey += 16 * s;
+        if (L.newGeneName.empty()) L.newGeneName = "Gen " + randomSpeciesName(sim.rng);
+        textField({ed.x, ey, ew - 130 * s, rowH}, L.newGeneName, 2);
+        if (button({ed.x + ew - 124 * s, ey, 124 * s, rowH}, "Tên ngẫu nhiên")) L.newGeneName = "Gen " + randomSpeciesName(sim.rng);
+        ey += rowH + 10 * s;
+        L.newEffect = cycler({ed.x, ey, ew, rowH}, std::string("Hiệu ứng: ") + geneEffectName(static_cast<GeneEffect>(L.newEffect)), L.newEffect, kGeneEffectCount);
+        ey += rowH + 4 * s;
+        ui::drawText(geneEffectDesc(static_cast<GeneEffect>(L.newEffect)), ed.x, ey, 12 * s, Color{255, 220, 150, 255});
+        ey += 20 * s;
+        slider({ed.x, ey, ew, rowH}, L.newStrength, 0.05f, 1.0f, "Cường độ", Color{255, 150, 255, 255});
+        ey += rowH + 8 * s;
+        if (button({ed.x, ey, ew, rowH * 1.2f}, "Cấy gen này vào loài mới", false, Color{120, 70, 140, 255})) {
+            addCustomGene(d, {L.newGeneName, static_cast<GeneEffect>(L.newEffect), L.newStrength});
+            L.message = "Đã cấy gen \"" + L.newGeneName + "\"";
+            L.messageTime = GetTime();
+            L.newGeneName.clear();
+        }
+        ey += rowH * 1.2f + 10 * s;
+        ui::drawText("Các gen tự tạo trong bản nháp:", ed.x, ey, 12 * s, kMuted); ey += 18 * s;
+        for (size_t i = 0; i < d.customGenes.size() && ey < ed.y + ed.height - rowH; ++i) {
+            const CustomGene& g = d.customGenes[i];
+            ui::drawText(g.name + " — " + geneEffectName(g.effect) + fmt(" (%.2f)", g.strength), ed.x + 6 * s, ey + (rowH - 13 * s) / 2, 13 * s, kText);
+            if (button({ed.x + ew - rowH, ey, rowH, rowH}, "x")) { d.customGenes.erase(d.customGenes.begin() + static_cast<long>(i)); break; }
+            ey += rowH + 2 * s;
+        }
+        if (!L.message.empty() && GetTime() - L.messageTime < 2.5) ui::drawText(L.message, ed.x, ed.y + ed.height - 18 * s, 13 * s, Color{150, 255, 170, 255});
+        break;
+    }
     }
 }
 
@@ -793,6 +1287,7 @@ void appInit(App& app) {
 void appStartWorld(App& app) { startWorld(app); }
 
 void appShutdown(App& app) {
+    fpRelease(app.fp);
     app.renderer.shutdown();
     ui::shutdownText();
 }
@@ -832,10 +1327,12 @@ void appFrame(App& app) {
     if (IsKeyPressed(KEY_SPACE)) app.speedIdx = app.speedIdx == 0 ? 1 : 0;
     for (int i = 0; i < 5; ++i) if (IsKeyPressed(KEY_ONE + i)) app.speedIdx = i;
     if (IsKeyPressed(KEY_F1)) app.opt.debugThoughts = !app.opt.debugThoughts;
-    if (IsKeyPressed(KEY_TAB)) app.panel = app.panel == SidePanel::Chronicle ? SidePanel::None : SidePanel::Chronicle;
-    if (IsKeyPressed(KEY_BACK) || IsKeyPressed(KEY_ESCAPE)) app.inMenu = true; // nút Back Android
+    if (IsKeyPressed(KEY_TAB) && !app.fp.active) app.panel = app.panel == SidePanel::Chronicle ? SidePanel::None : SidePanel::Chronicle;
+    if (!app.fp.active && (IsKeyPressed(KEY_BACK) || IsKeyPressed(KEY_ESCAPE))) app.inMenu = true; // nút Back Android
 
-    if (app.globe) handleGlobeInput(app);
+    if (app.lab.open) { /* phòng thí nghiệm gen chiếm toàn màn hình */ }
+    else if (app.fp.active) handleFpInput(app);
+    else if (app.globe) handleGlobeInput(app);
     else handleWorldInput(app);
 
     // ---- Mô phỏng: bước thời gian cố định, giới hạn ngân sách thời gian mỗi khung ----
@@ -856,6 +1353,12 @@ void appFrame(App& app) {
     if (app.frame % 4 == 0 || sim.world.fullRedraw) app.renderer.sync(sim);
 
     BeginDrawing();
+    if (app.fp.active) {
+        fpRender(app.fp, sim, app.renderer, static_cast<float>(GetTime()));
+        drawFpHud(app);
+        EndDrawing();
+        return;
+    }
     if (app.globe) {
         app.renderer.drawGlobe(sim, app.globeView, app.opt, static_cast<float>(GetTime()), app.uiScale);
         drawHud(app);
@@ -874,7 +1377,8 @@ void appFrame(App& app) {
     }
     EndMode2D();
     app.renderer.drawOverlay(sim, app.cam, app.opt, app.uiScale);
-    drawHud(app);
+    if (app.lab.open) drawGeneLab(app);   // phòng thí nghiệm gen phủ toàn màn hình (không vẽ HUD bên dưới để tránh bấm xuyên)
+    else drawHud(app);
     EndDrawing();
 }
 
