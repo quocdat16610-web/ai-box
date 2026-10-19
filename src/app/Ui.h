@@ -15,6 +15,7 @@
 #include "../sim/GodPowers.h"
 #include "../sim/Scenarios.h"
 #include "../sim/Simulation.h"
+#include "../sim/SaveLoad.h"
 #include <memory>
 #include <vector>
 
@@ -54,6 +55,16 @@ struct App {
     GlobeView globeView;
     FirstPerson fp;            // góc nhìn thứ nhất / điều khiển sinh vật
     GeneLab lab;
+
+    // Lưu / tải thế giới: ô 0 = tự động lưu, ô 1..3 = người chơi chọn
+    static constexpr int kSlots = 4;
+    bool savePage = false;                 // đang mở màn hình Lưu / Tải
+    bool slotKnown[kSlots] = {};
+    SaveInfo slotInfo[kSlots];
+    bool slotsScanned = false;
+    std::string toast;                     // thông báo ngắn ("Đã lưu vào ô 1")
+    double toastTime = -10;
+    double lastAutosave = 0;
     int lastW = 0, lastH = 0;   // kích thước màn hình khung trước (phát hiện xoay điện thoại)
 
     ToolCategory category = ToolCategory::Inspect;
@@ -83,5 +94,6 @@ void appInit(App& app);
 void appStartWorld(App& app); // tạo thế giới theo app.scenario/app.worldSize
 void appFrame(App& app);
 void appShutdown(App& app);
+bool appLoadSlot(App& app, int slot);   // tải thế giới đã lưu (0 = tự động lưu)
 
 } // namespace wb

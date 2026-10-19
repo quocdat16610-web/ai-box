@@ -8,6 +8,7 @@
 // về mã lỗi 1 nếu không có nhóm nào đạt giai đoạn văn minh yêu cầu (dùng cho CI).
 // =============================================================================
 #include "../sim/Simulation.h"
+#include "../sim/SaveLoad.h"
 #include "../sim/Scenarios.h"
 #include <chrono>
 #include <cstdio>
@@ -162,7 +163,59 @@ int runGeneLabTest() {
     return fails ? 1 : 0;
 }
 
+// Kiểm thử lưu/tải: chạy 2 năm → lưu → tải → chạy 2 năm phải GIỐNG HỆT chạy liền 4 năm.
+// (Bất kỳ trường dữ liệu nào bị quên lưu đều làm hai lịch sử rẽ hướng → phát hiện ngay.)
+int runSaveTest() {
+    auto signature = [](Simulation& s) {
+        double h = 0;
+        for (Entity e : s.agents) {
+            const Transform& t = s.reg.get<Transform>(e);
+            const Body& b = s.reg.get<Body>(e);
+            const Mind& m = s.reg.get<Mind>(e);
+            h += t.pos.x * 1.3 + t.pos.y * 0.7 + b.hp * 0.11 + b.hunger + m.intellect * 3 + m.know.designs.size();
+        }
+        char buf[256];
+        std::snprintf(buf, sizeof buf, "tick %ld · dân %zu · sinh %d · chết %d · nhóm %d · thiết kế %zu · biên niên %ld · tổng kiểm %.4f",
+                      s.tick, s.agents.size(), s.stats().births, s.stats().deaths, s.stats().groups, s.designs.all.size(), s.chronicle.total(), h);
+        return std::string(buf);
+    };
+    SimConfig cfg; cfg.seed = 11; cfg.threads = 1; cfg.width = 192; cfg.height = 96;
+    // WB_SAVETEST="năm kịch_bản" để thử nặng hơn (mặc định 2 năm, người nguyên thuỷ)
+    long years = 2;
+    Scenario sc = Scenario::PrimalHumans;
+    if (const char* env = std::getenv("WB_SAVETEST")) {
+        char name[32] = "humans";
+        std::sscanf(env, "%ld %31s", &years, name);
+        sc = scenarioFromString(name);
+    }
+    const long half = years * kTicksPerYear;
+    Simulation a(cfg);
+    setupScenario(a, sc);
+    for (long t = 0; t < 2 * half; ++t) a.step();
+    std::string straight = signature(a);
+
+    Simulation b(cfg);
+    setupScenario(b, sc);
+    for (long t = 0; t < half; ++t) b.step();
+    std::string path = "wb_savetest.wbs", err;
+    SaveInfo info; info.title = "kiểm thử";
+    if (!saveWorld(b, path, info, &err)) { std::printf("Lưu thất bại: %s\n", err.c_str()); return 1; }
+    FILE* f = std::fopen(path.c_str(), "rb"); std::fseek(f, 0, SEEK_END); long bytes = std::ftell(f); std::fclose(f);
+    auto c = loadWorld(path, &info, &err);
+    std::remove(path.c_str());
+    if (!c) { std::printf("Tải thất bại: %s\n", err.c_str()); return 1; }
+    c->cfg.threads = 1;
+    for (long t = 0; t < half; ++t) c->step();
+    std::string resumed = signature(*c);
+    std::printf("  chạy liền       : %s\n  lưu → tải → chạy: %s\n  kích thước tệp lưu: %.1f MB (năm %ld, %d sinh vật)\n", straight.c_str(), resumed.c_str(),
+                bytes / 1048576.0, info.tick / kTicksPerYear, info.population);
+    bool ok = straight == resumed;
+    std::printf("Kiểm thử lưu/tải thế giới: %s\n", ok ? "ĐẠT (giống hệt)" : "KHÔNG ĐẠT (lịch sử rẽ hướng — thiếu dữ liệu khi lưu)");
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--savetest") return runSaveTest();
     for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--chemtest") return runChemTests();
     for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--genelab-test") return runGeneLabTest();
     SimConfig cfg;

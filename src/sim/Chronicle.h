@@ -11,6 +11,8 @@
 
 namespace wb {
 
+struct SaveAccess;
+
 enum class EventKind : uint8_t { Discovery, Society, War, Evolution, Disaster, Death, Misc };
 
 struct ChronicleEntry {
@@ -34,6 +36,7 @@ public:
     void clear() { entries_.clear(); total_ = 0; }
 
 private:
+    friend struct SaveAccess;
     std::deque<ChronicleEntry> entries_;
     long total_ = 0;
 };

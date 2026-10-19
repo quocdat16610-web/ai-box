@@ -21,6 +21,8 @@
 
 namespace wb {
 
+struct SaveAccess;
+
 using Entity = uint32_t;
 constexpr Entity NullEntity = 0xFFFFFFFFu;
 constexpr uint32_t kIndexBits = 20;
@@ -130,6 +132,7 @@ public:
     size_t aliveCount() const { return alive_; }
 
 private:
+    friend struct SaveAccess;
     std::vector<uint32_t> versions_;
     std::vector<uint32_t> freeList_;
     std::vector<std::unique_ptr<IPool>> pools_;

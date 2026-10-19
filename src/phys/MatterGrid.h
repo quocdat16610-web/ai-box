@@ -26,6 +26,8 @@
 
 namespace wb {
 
+struct SaveAccess;
+
 class World;
 
 struct MatterSlot {
@@ -113,6 +115,7 @@ public:
     std::vector<float>& temps() { return temp_; }
 
 private:
+    friend struct SaveAccess;
     void thermalStep(World& w);
     void fireStep(World& w, Rng& rng, long tick);
     void cellStep(World& w, int i, Rng& rng, long tick);

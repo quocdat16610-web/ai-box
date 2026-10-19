@@ -18,6 +18,12 @@ const char* roleName(Role r) {
 }
 
 Simulation::Simulation(const SimConfig& c) { reset(c); }
+
+Simulation::Simulation(const SimConfig& c, NoGenerate) : cfg(c) {
+    pool_ = std::make_unique<ThreadPool>(cfg.threads);
+    society_ = std::make_unique<SocietySystem>(*this);
+    reg.pool<Transform>(); reg.pool<Body>(); reg.pool<Inventory>(); reg.pool<Social>(); reg.pool<GenomeC>(); reg.pool<Mind>();
+}
 Simulation::~Simulation() = default;
 
 void Simulation::reset(const SimConfig& c) {

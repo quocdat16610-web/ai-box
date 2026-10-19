@@ -17,6 +17,8 @@
 
 namespace wb {
 
+struct SaveAccess;
+
 constexpr int kTicksPerYear = 600;
 constexpr uint8_t kTileVolcanic = 1;     // hồ dung nham núi lửa (nguồn nhiệt vĩnh viễn)
 constexpr uint8_t kTileCaveEntrance = 2; // cửa hang tự nhiên: mặt đất thông xuống hang động
@@ -138,6 +140,7 @@ public:
     MatterGrid matter;            // nhiệt độ, chất lỏng, khí, phản ứng
 
 private:
+    friend struct SaveAccess;   // lưu / tải thế giới (sim/SaveLoad.cpp)
     void classify(int x, int y, float h, float moist, float temp);
     void generateUnderground(uint32_t seed, Rng& rng);
     int w_ = 0, h_ = 0;

@@ -20,6 +20,8 @@
 
 namespace wb {
 
+struct SaveAccess;
+
 using MatId = uint16_t;
 constexpr MatId kNoMat = 0;   // id 0 = "không khí / không có gì"
 
@@ -112,6 +114,7 @@ public:
     std::vector<MatId> exoticOres;
 
 private:
+    friend struct SaveAccess;
     std::vector<MaterialDef> defs_;
     std::unordered_map<uint32_t, MatId> alloyCache_;
     uint32_t seed_ = 0;

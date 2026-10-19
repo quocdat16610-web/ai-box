@@ -10,6 +10,15 @@
 #include <cstdarg>
 #include <algorithm>
 #include <iterator>
+#if defined(_WIN32)
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#endif
+#if defined(PLATFORM_ANDROID)
+#include <android_native_app_glue.h>
+extern "C" struct android_app* GetAndroidApp(void);   // do raylib cung cấp
+#endif
 
 namespace wb {
 
@@ -50,6 +59,7 @@ const char* kCategoryNames[] = {"Quan sát", "Địa hình", "Vật chất", "S�
 // Tiện ích UI tức thời (immediate mode)
 // ---------------------------------------------------------------------------
 App* gApp = nullptr;
+bool doSave(App& app, int slot, bool quiet = false);   // lưu thế giới (định nghĩa ở phần "Lưu / tải")
 
 bool pointInRect(Vector2 p, Rectangle r) { return p.x >= r.x && p.y >= r.y && p.x <= r.x + r.width && p.y <= r.y + r.height; }
 
@@ -653,7 +663,7 @@ void drawHud(App& app) {
         if (button({bx + 90 * s, 4 * s, 86 * s, th - 8 * s}, "Suy nghĩ", app.opt.debugThoughts)) app.opt.debugThoughts = !app.opt.debugThoughts;
         if (button({bx + 180 * s, 4 * s, 86 * s, th - 8 * s}, std::string("Lớp: ") + layerName(app.opt.layer), app.opt.layer != Layer::Normal))
             app.opt.layer = static_cast<Layer>((static_cast<int>(app.opt.layer) + 1) % static_cast<int>(Layer::Count));
-        if (button({bx + 270 * s, 4 * s, 80 * s, th - 8 * s}, "Menu")) app.inMenu = true;
+        if (button({bx + 270 * s, 4 * s, 80 * s, th - 8 * s}, "Menu")) { app.inMenu = true; doSave(app, 0, true); }
     }
 
     // ---- Thanh công cụ dưới ----
@@ -694,7 +704,7 @@ void drawHud(App& app) {
             tx += toolW + 4 * s;
             if (button({tx, rowY2, toolW, bh}, "Suy nghĩ", app.opt.debugThoughts)) app.opt.debugThoughts = !app.opt.debugThoughts;
             tx += toolW + 4 * s;
-            if (button({tx, rowY2, toolW, bh}, "Menu")) app.inMenu = true;
+            if (button({tx, rowY2, toolW, bh}, "Menu")) { app.inMenu = true; doSave(app, 0, true); }
             tx += toolW + 4 * s;
             if (button({tx, rowY2, toolW, bh}, "Hoá học", app.panel == SidePanel::Chemistry))
                 app.panel = app.panel == SidePanel::Chemistry ? SidePanel::None : SidePanel::Chemistry;
@@ -1212,10 +1222,136 @@ void drawGeneLab(App& app) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Lưu / tải thế giới
+// ---------------------------------------------------------------------------
+// Thư mục lưu: Android → bộ nhớ riêng của ứng dụng; PC → thư mục "saves" cạnh file chạy.
+std::string saveDir() {
+    static std::string dir;
+    if (!dir.empty()) return dir;
+#if defined(PLATFORM_ANDROID)
+    const char* base = GetAndroidApp() && GetAndroidApp()->activity ? GetAndroidApp()->activity->internalDataPath : nullptr;
+    dir = std::string(base ? base : ".") + "/saves/";
+#else
+    dir = std::string(GetApplicationDirectory()) + "saves/";
+#endif
+#if defined(_WIN32)
+    _mkdir(dir.c_str());
+#else
+    mkdir(dir.c_str(), 0755);
+#endif
+    return dir;
+}
+
+std::string slotPath(int slot) { return saveDir() + (slot == 0 ? std::string("autosave.wbs") : "slot" + std::to_string(slot) + ".wbs"); }
+const char* slotName(int slot) {
+    static const char* n[] = {"Tự động lưu", "Ô lưu 1", "Ô lưu 2", "Ô lưu 3"};
+    return n[slot];
+}
+
+void showToast(App& app, const std::string& t) { app.toast = t; app.toastTime = GetTime(); }
+
+void scanSlots(App& app) {
+    for (int i = 0; i < App::kSlots; ++i) app.slotKnown[i] = readSaveInfo(slotPath(i), app.slotInfo[i]);
+    app.slotsScanned = true;
+}
+
+bool doSave(App& app, int slot, bool quiet) {
+    if (!app.sim) return false;
+    SaveInfo info;
+    info.title = std::string(scenarioName(app.scenario)) + " · " + worldTypeName(app.sim->world.type());
+    info.scenario = static_cast<int>(app.scenario);
+    info.worldType = static_cast<int>(app.sim->world.type());
+    info.worldSize = app.worldSize;
+    info.camX = app.cam.target.x; info.camY = app.cam.target.y; info.camZoom = app.cam.zoom;
+    // Đang nhập vai: thả quyền điều khiển trước khi lưu (bản lưu không giữ trạng thái người chơi)
+    bool possessed = app.fp.active && app.sim->reg.valid(app.fp.who) && app.sim->reg.get<Mind>(app.fp.who).possessed;
+    if (possessed) app.sim->reg.get<Mind>(app.fp.who).possessed = false;
+    std::string err;
+    bool ok = saveWorld(*app.sim, slotPath(slot), info, &err);
+    if (possessed) app.sim->reg.get<Mind>(app.fp.who).possessed = true;
+    if (!quiet || !ok) showToast(app, ok ? std::string("Đã lưu thế giới vào ") + slotName(slot) : "Lưu thất bại: " + err);
+    app.slotsScanned = false;
+    return ok;
+}
+
+bool doLoad(App& app, int slot) {
+    SaveInfo info;
+    std::string err;
+    auto sim = loadWorld(slotPath(slot), &info, &err);
+    if (!sim) { showToast(app, "Không tải được: " + err); return false; }
+    if (app.sim) fpExit(app.fp, *app.sim);
+    fpRelease(app.fp);
+    app.sim = std::move(sim);
+    for (Entity e : app.sim->agents) app.sim->reg.get<Mind>(e).possessed = false;
+    app.renderer.init(*app.sim);
+    app.scenario = static_cast<Scenario>(std::clamp(info.scenario, 0, static_cast<int>(Scenario::Count) - 1));
+    app.worldSize = info.worldSize > 0 ? info.worldSize : app.sim->world.height();
+    app.cam.target = {info.camX, info.camY};
+    app.cam.zoom = info.camZoom;
+    app.cam.offset = {GetScreenWidth() / 2.0f, GetScreenHeight() / 2.0f};
+    app.opt = RenderOptions{};
+    app.globe = false;
+    app.lab = GeneLab{};
+    app.panel = SidePanel::Chronicle;
+    app.inMenu = false;
+    app.savePage = false;
+    app.speedIdx = 1;
+    app.lastAutosave = GetTime();
+    clampCamera(app);
+    showToast(app, std::string("Đã tải ") + slotName(slot) + " — năm " + std::to_string(info.tick / kTicksPerYear));
+    return true;
+}
+
+void drawSavePage(App& app) {
+    float s = app.uiScale;
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    if (!app.slotsScanned) scanSlots(app);
+    ui::drawText("Lưu / Tải thế giới", 20 * s, 14 * s, 26 * s, Color{255, 220, 120, 255});
+    float bh = std::min(46 * s, (H - 120 * s) / 5.5f), y = 60 * s, x = 20 * s, w = W - 40 * s;
+    float bw = std::min(130 * s, w * 0.22f);
+    for (int i = 0; i < App::kSlots; ++i) {
+        Rectangle row{x, y, w, bh * 1.5f};
+        panel(row, kPanelLight);
+        std::string line1 = slotName(i), line2 = "(trống)";
+        if (app.slotKnown[i]) {
+            const SaveInfo& in = app.slotInfo[i];
+            line1 += " — " + in.title;
+            line2 = fmt("Năm %ld · %d sinh vật · %d nhóm · %d quốc gia · %d loài · lưu lúc %s", in.tick / kTicksPerYear, in.population, in.groups,
+                        in.nations, in.species, in.savedAt.c_str());
+        }
+        float fs = 14 * s;
+        float textW = w - 2 * bw - 30 * s;
+        auto fit = [&](std::string t, float f) {
+            while (t.size() > 4 && ui::measureText(t, f) > textW) { t.pop_back(); while (!t.empty() && (static_cast<unsigned char>(t.back()) & 0xC0) == 0x80) t.pop_back(); }
+            return t;
+        };
+        ui::drawText(fit(line1, fs), row.x + 10 * s, row.y + row.height * 0.18f, fs, kText);
+        ui::drawText(fit(line2, fs * 0.85f), row.x + 10 * s, row.y + row.height * 0.55f, fs * 0.85f, kMuted);
+        float by = row.y + (row.height - bh) / 2;
+        if (app.slotKnown[i] && button({row.x + row.width - bw - 8 * s, by, bw, bh}, "Tải", false, Color{60, 110, 160, 255})) { doLoad(app, i); return; }
+        if (app.sim && i > 0 && button({row.x + row.width - 2 * bw - 14 * s, by, bw, bh}, "Lưu", false, Color{60, 140, 80, 255})) doSave(app, i);
+        y += row.height + 8 * s;
+    }
+    if (!app.sim) ui::drawText("Chưa có thế giới đang chạy — hãy tạo thế giới mới để có thể lưu.", x, y + 4 * s, 13 * s, kMuted);
+    ui::drawText(std::string("Thư mục lưu: ") + saveDir() + "  ·  F5 lưu nhanh vào Ô 1, F9 tải Ô 1 · tự động lưu mỗi 3 phút", x, H - 24 * s, 11 * s, kMuted);
+    if (button({W - 160 * s, 12 * s, 140 * s, 40 * s}, "Quay lại")) app.savePage = false;
+}
+
+void drawToast(App& app) {
+    if (app.toast.empty() || GetTime() - app.toastTime > 3.0) return;
+    float s = app.uiScale, fs = 15 * s;
+    float tw = ui::measureText(app.toast, fs);
+    float x = (GetScreenWidth() - tw) / 2, y = 56 * s;
+    DrawRectangleRounded({x - 12 * s, y - 6 * s, tw + 24 * s, fs + 12 * s}, 0.4f, 6, Color{20, 60, 30, 230});
+    ui::drawText(app.toast, x, y, fs, Color{190, 255, 200, 255});
+}
+
 void drawMenu(App& app) {
     float s = app.uiScale;
     int W = GetScreenWidth(), H = GetScreenHeight();
     ClearBackground(Color{14, 18, 30, 255});
+    if (app.savePage) { drawSavePage(app); drawToast(app); return; }
     // nền pixel trang trí
     for (int i = 0; i < 300; ++i) {
         uint32_t h = hash32(i * 977);
@@ -1267,6 +1403,9 @@ void drawMenu(App& app) {
     if (button({xR, y, colW, bh * 1.2f}, "BẮT ĐẦU", false, Color{60, 140, 80, 255})) startWorld(app);
     y += bh * 1.2f + gap;
     if (app.sim && button({xR, y, colW, bh * 0.85f}, "Tiếp tục thế giới hiện tại")) app.inMenu = false;
+    if (app.sim) y += bh * 0.85f + gap;
+    if (button({xR, y, colW, bh * 0.85f}, "Lưu / Tải thế giới", false, Color{60, 90, 140, 255})) { app.savePage = true; app.slotsScanned = false; }
+    drawToast(app);
     if (!ui::hasUnicodeFont())
         ui::drawText("(Không tìm thấy font Unicode — chữ hiển thị không dấu)", 10, H - 24 * s, 12 * s, kMuted);
 }
@@ -1285,8 +1424,10 @@ void appInit(App& app) {
 }
 
 void appStartWorld(App& app) { startWorld(app); }
+bool appLoadSlot(App& app, int slot) { return doLoad(app, slot); }
 
 void appShutdown(App& app) {
+    if (app.sim) doSave(app, 0, true);   // thoát game → tự lưu
     fpRelease(app.fp);
     app.renderer.shutdown();
     ui::shutdownText();
@@ -1327,8 +1468,13 @@ void appFrame(App& app) {
     if (IsKeyPressed(KEY_SPACE)) app.speedIdx = app.speedIdx == 0 ? 1 : 0;
     for (int i = 0; i < 5; ++i) if (IsKeyPressed(KEY_ONE + i)) app.speedIdx = i;
     if (IsKeyPressed(KEY_F1)) app.opt.debugThoughts = !app.opt.debugThoughts;
+    if (IsKeyPressed(KEY_F5)) doSave(app, 1);
+    if (IsKeyPressed(KEY_F9)) { doLoad(app, 1); return; }
+    // Tự động lưu mỗi 3 phút chơi (điện thoại có thể bị hệ điều hành tắt app bất cứ lúc nào)
+    if (app.lastAutosave == 0) app.lastAutosave = GetTime();
+    if (GetTime() - app.lastAutosave > 180) { doSave(app, 0, true); app.lastAutosave = GetTime(); }
     if (IsKeyPressed(KEY_TAB) && !app.fp.active) app.panel = app.panel == SidePanel::Chronicle ? SidePanel::None : SidePanel::Chronicle;
-    if (!app.fp.active && (IsKeyPressed(KEY_BACK) || IsKeyPressed(KEY_ESCAPE))) app.inMenu = true; // nút Back Android
+    if (!app.fp.active && (IsKeyPressed(KEY_BACK) || IsKeyPressed(KEY_ESCAPE))) { app.inMenu = true; doSave(app, 0, true); } // nút Back Android → tự lưu
 
     if (app.lab.open) { /* phòng thí nghiệm gen chiếm toàn màn hình */ }
     else if (app.fp.active) handleFpInput(app);
@@ -1379,6 +1525,7 @@ void appFrame(App& app) {
     app.renderer.drawOverlay(sim, app.cam, app.opt, app.uiScale);
     if (app.lab.open) drawGeneLab(app);   // phòng thí nghiệm gen phủ toàn màn hình (không vẽ HUD bên dưới để tránh bấm xuyên)
     else drawHud(app);
+    drawToast(app);
     EndDrawing();
 }
 

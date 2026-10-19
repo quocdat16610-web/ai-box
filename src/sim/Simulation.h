@@ -29,6 +29,8 @@
 
 namespace wb {
 
+struct SaveAccess;
+
 struct SimConfig {
     int width = 192, height = 192;
     uint32_t seed = 12345;
@@ -55,6 +57,9 @@ class SocietySystem;
 class Simulation {
 public:
     explicit Simulation(const SimConfig& cfg);
+    // Tạo khung rỗng (không sinh thế giới) — dùng khi tải thế giới đã lưu
+    struct NoGenerate {};
+    Simulation(const SimConfig& cfg, NoGenerate);
     ~Simulation();
     void reset(const SimConfig& cfg);
     void step();
@@ -110,6 +115,7 @@ public:
     std::vector<std::pair<int, int>> killEvents; // (nhóm kẻ giết, nhóm nạn nhân) — SocietySystem xử lý ngoại giao        // tech đã được phát minh lần đầu ở đâu đó trên thế giới
 
 private:
+    friend struct SaveAccess;
     void rebuildGrid();
     void metabolism();
     void cleanupDead();

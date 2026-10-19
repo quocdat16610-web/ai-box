@@ -62,6 +62,8 @@ int main() {
                 if (g.alive && g.forgeX >= 0) { app.cam.target = {(g.forgeX + 0.5f) * wb::kTileWorld, (g.forgeY + 0.5f) * wb::kTileWorld}; app.cam.zoom = 5; break; }
         }
     }
+    if (std::getenv("WB_SAVEPAGE")) { app.inMenu = true; app.savePage = true; }
+    if (const char* ld = std::getenv("WB_LOAD")) wb::appLoadSlot(app, std::atoi(ld));
     int frame = 0;
     while (!WindowShouldClose()) {
         if (autostart && std::getenv("WB_SELECT") && !std::getenv("WB_GOTO_FORGE") && frame == 2 && !app.sim->agents.empty()) {

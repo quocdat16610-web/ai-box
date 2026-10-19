@@ -19,6 +19,8 @@
 
 namespace wb {
 
+struct SaveAccess;
+
 // ---------------- Trí nhớ ngắn hạn ----------------
 enum class PerceptKind : uint8_t { Ally, Kin, Stranger, Predator, Prey, Enemy, Item, Fire };
 
@@ -115,6 +117,7 @@ public:
     void clear() { facts_.clear(); }
 
 private:
+    friend struct SaveAccess;
     static float score(const Fact& f) { return f.confidence + f.reinforce * 0.05f; }
     void prune() {
         facts_.erase(std::remove_if(facts_.begin(), facts_.end(), [](const Fact& f) { return f.confidence <= 0; }), facts_.end());
