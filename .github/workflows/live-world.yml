@@ -1,0 +1,132 @@
+# =============================================================================
+# Thế giới đang sống: GitHub chạy thế giới MỖI GIỜ, kể cả khi không ai mở game.
+#
+# Mỗi lượt: tải bản lưu mới nhất từ Release "live-world" → chạy tiếp đúng bằng thời gian
+# thật đã trôi qua kể từ lượt trước (như để game chạy ở tốc độ 1x; tối đa 3 giờ/lượt)
+# → đăng lại bản lưu + bản tóm tắt (năm, dân số, các nhóm, biên niên sử) lên Release.
+# Dùng Release thay vì commit nên lịch sử git không phình to; có 7 bản sao lưu xoay vòng theo ngày.
+#
+# Trong game: Menu → Lưu / Tải thế giới → "Thế giới trên GitHub" → Tải về.
+# Đưa thế giới của bạn lên: tải tệp .wbs vào thư mục world/upload/ (xem world/upload/README.md).
+# Tạo lại từ đầu: tab Actions → "Thế giới đang sống" → Run workflow → tick "Tạo thế giới MỚI".
+# =============================================================================
+name: Thế giới đang sống
+
+on:
+  schedule:
+    - cron: '17 * * * *'      # mỗi giờ (phút 17 để tránh giờ cao điểm của GitHub)
+  workflow_dispatch:
+    inputs:
+      reset:
+        description: 'Tạo thế giới MỚI (thay thế thế giới đang chạy; bản cũ vẫn còn trong các bản sao lưu)'
+        type: boolean
+        default: false
+      scenario:
+        description: 'Kịch bản khi tạo mới'
+        type: choice
+        options: [sandbox, humans, wolves, twins]
+        default: sandbox
+      world:
+        description: 'Kiểu hành tinh khi tạo mới'
+        type: choice
+        options: [continents, random, pangaea, archipelago, ocean, dry]
+        default: continents
+      speed:
+        description: 'Tốc độ thời gian (1 = như game để 1x: 30 giây thật = 1 năm)'
+        default: '1'
+  push:
+    paths:
+      - 'world/upload/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live-world
+  cancel-in-progress: false
+
+jobs:
+  live:
+    name: Chạy tiếp thế giới
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: live-world
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bộ nhớ đệm bản build
+        uses: actions/cache@v4
+        with:
+          path: build-live
+          key: live-${{ runner.os }}-${{ hashFiles('src/**', 'CMakeLists.txt') }}
+          restore-keys: live-${{ runner.os }}-
+
+      - name: Build trình chạy headless
+        run: |
+          cmake -S . -B build-live -DCMAKE_BUILD_TYPE=Release -DWB_BUILD_GAME=OFF
+          cmake --build build-live -j4 --target worldbox_sim
+
+      - name: Tải thế giới hiện tại từ Release
+        run: |
+          mkdir -p live
+          gh release download "$TAG" -D live -p world.wbs -p state.env --clobber || echo "Chưa có thế giới trên GitHub — sẽ tạo mới"
+          ls -la live
+
+      - name: Chọn đầu vào & thời gian cần chạy
+        id: plan
+        run: |
+          LAST=0; UPLOAD_HASH=""
+          if [ -f live/state.env ]; then . live/state.env; fi
+          NOW=$(date +%s)
+          IN=""
+          if [ -f live/world.wbs ]; then IN=live/world.wbs; fi
+          # Người chơi tải thế giới của mình lên world/upload/ → dùng nó (chỉ một lần cho mỗi tệp)
+          UP=$(ls -t world/upload/*.wbs 2>/dev/null | head -1 || true)
+          if [ -n "$UP" ]; then
+            H=$(sha256sum "$UP" | cut -c1-16)
+            if [ "$H" != "$UPLOAD_HASH" ]; then IN="$UP"; UPLOAD_HASH="$H"; echo "Dùng thế giới người chơi tải lên: $UP"; fi
+          fi
+          if [ "${{ inputs.reset }}" = "true" ]; then IN=""; echo "Tạo thế giới mới theo yêu cầu"; fi
+          if [ "$LAST" = "0" ]; then ELAPSED=600; else ELAPSED=$(( NOW - LAST )); fi
+          if [ $ELAPSED -gt 10800 ]; then ELAPSED=10800; fi   # tối đa 3 giờ mỗi lượt (bù khi lịch chạy bị trễ)
+          if [ $ELAPSED -lt 0 ]; then ELAPSED=0; fi
+          if [ -z "$IN" ] && [ $ELAPSED -lt 600 ]; then ELAPSED=600; fi   # thế giới mới: cho sống trước ~20 năm
+          echo "in=$IN" >> "$GITHUB_OUTPUT"
+          echo "elapsed=$ELAPSED" >> "$GITHUB_OUTPUT"
+          echo "now=$NOW" >> "$GITHUB_OUTPUT"
+          echo "upload_hash=$UPLOAD_HASH" >> "$GITHUB_OUTPUT"
+          echo "Đầu vào: ${IN:-(thế giới mới)} · chạy $ELAPSED giây thời gian thật"
+
+      - name: Chạy thế giới
+        env:
+          IN: ${{ steps.plan.outputs.in }}
+          ELAPSED: ${{ steps.plan.outputs.elapsed }}
+          SPEED: ${{ inputs.speed || '1' }}
+          SCENARIO: ${{ inputs.scenario || 'sandbox' }}
+          WORLD: ${{ inputs.world || 'continents' }}
+        run: |
+          mkdir -p out
+          ARGS="--live --out out/world.wbs --seconds $ELAPSED --speed $SPEED --budget 1800 --summary out/summary.md --new-scenario $SCENARIO --new-world $WORLD"
+          if [ -n "$IN" ]; then ARGS="$ARGS --in $IN"; fi
+          ./build-live/worldbox_sim $ARGS
+          printf 'LAST=%s\nUPLOAD_HASH=%s\n' "${{ steps.plan.outputs.now }}" "${{ steps.plan.outputs.upload_hash }}" > out/state.env
+          printf '\n---\n_Cập nhật lúc %s (UTC) · lượt chạy [#%s](%s/%s/actions/runs/%s)_\n' "$(date -u '+%Y-%m-%d %H:%M')" \
+            "${{ github.run_number }}" "${{ github.server_url }}" "${{ github.repository }}" "${{ github.run_id }}" >> out/summary.md
+          cat out/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Đăng lên Release "live-world"
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "🌍 Thế giới đang sống" --notes-file out/summary.md --prerelease --target "${{ github.sha }}"
+          else
+            gh release edit "$TAG" --notes-file out/summary.md
+          fi
+          gh release upload "$TAG" out/world.wbs out/state.env --clobber
+          # Sao lưu xoay vòng 7 ngày: mỗi ngày một bản (lượt đầu tiên của ngày theo giờ UTC)
+          DAY=$(date -u +%a)
+          if [ "$(date -u +%H)" = "00" ] || ! gh release view "$TAG" --json assets -q '.assets[].name' | grep -qx "backup-$DAY.wbs"; then
+            cp out/world.wbs "out/backup-$DAY.wbs"
+            gh release upload "$TAG" "out/backup-$DAY.wbs" --clobber
+          fi

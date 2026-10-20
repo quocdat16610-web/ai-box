@@ -27,6 +27,14 @@ và quan sát chúng **tự suy nghĩ, học hỏi, tiến hoá** thành bộ t�
   (thanh **Hơi thở**): thú trên cạn lội nước nông lâu, bơi nước sâu 25–175 giây tuỳ gen bơi lội (có bè/thuyền thì không giới hạn);
   cá lên cạn quẫy được vài giây. Hết hơi → ngạt / đuối nước. Cá mập săn được kẻ đang bơi; AI hụt hơi tự bơi vào bờ / nhảy về nước. Sinh vật có **hoạt ảnh**: chân bước, tay vung, đuôi vẫy, chim vỗ cánh, cá quẫy,
   ngủ nằm, ăn cúi đầu; người chơi thấy tay mình cầm giáo/rìu vung lên khi hành động.
+* **Chế tạo & xây dựng khi nhập vai** (phím C / B): ghép bộ phận vật liệu × hình dạng × kích thước, xem trước hiệu năng tính
+  bằng đúng công thức vật lý của AI (sức cắt, tầm bắn, sức nổi, nhiệt độ lò...), nút **Gợi ý thiết kế**, làm lại thiết kế đã biết;
+  xây 14 loại công trình ở ô trước mặt (lều, nhà gỗ/đá, bếp, lò luyện, cầu, tường, đền, toà thị chính, lâu đài...) bằng túi đồ
+  + kho chung, có giải thích còn thiếu gì (công cụ cắt đủ sắc, lò ≥ 900°C, biết tạo lửa...).
+* **Thế giới trên GitHub chạy liên tục**: workflow `live-world.yml` chạy MỖI GIỜ kể cả khi không ai mở game — tiếp tục thế giới
+  đúng bằng thời gian thật đã trôi qua (như để game chạy ở 1x), lưu vào Release `live-world` kèm bản tóm tắt (năm, dân số, các
+  nhóm, biên niên sử) và 7 bản sao lưu theo ngày. Trong game: **Lưu / Tải thế giới → Thế giới trên GitHub → Tải về**. Đưa thế
+  giới của bạn lên: thả tệp `.wbs` vào `world/upload/`. Tạo lại: tab Actions → *Thế giới đang sống* → Run workflow.
 * **Lưu / tải thế giới**: 3 ô lưu + 1 ô tự động lưu (mỗi 3 phút, khi thoát / về menu); F5 lưu nhanh, F9 tải nhanh. Lưu đầy đủ
   mọi thứ (địa hình, vật chất, lòng đất, sinh vật kèm trí nhớ & kế hoạch, bộ lạc, quốc gia, loài tự tạo...) — tải lên chạy tiếp
   giống hệt như chưa từng dừng.

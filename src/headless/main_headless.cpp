@@ -13,6 +13,9 @@
 #include "../ai/Brain.h"
 #include "../ai/Invention.h"
 #include <chrono>
+#include <vector>
+#include <algorithm>
+#include <ctime>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -118,6 +121,123 @@ static int runChemTests() {
     }
     std::printf("Kiểm thử hoá học: %s (%d lỗi)\n", failed ? "THẤT BẠI" : "ĐẠT", failed);
     return failed ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Thế giới "đang sống" trên GitHub Actions (xem .github/workflows/live-world.yml):
+// tải bản lưu → chạy tiếp đúng bằng thời gian thật đã trôi qua (như để game chạy ở tốc độ 1x)
+// → lưu lại + xuất bản tóm tắt Markdown để xem ngay trên GitHub.
+// ---------------------------------------------------------------------------
+int runLive(int argc, char** argv) {
+    std::string in, out = "world.wbs", summary, scen = "sandbox", wtype = "continents";
+    double seconds = 3600, speed = 1.0, budget = 1500;
+    int size = 128;
+    uint32_t seed = 0;
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        auto next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
+        if (a == "--in") in = next();
+        else if (a == "--out") out = next();
+        else if (a == "--summary") summary = next();
+        else if (a == "--seconds") seconds = std::stod(next());
+        else if (a == "--speed") speed = std::stod(next());
+        else if (a == "--budget") budget = std::stod(next());
+        else if (a == "--new-scenario") scen = next();
+        else if (a == "--new-world") wtype = next();
+        else if (a == "--new-size") size = std::max(48, std::min(256, std::stoi(next())));
+        else if (a == "--seed") seed = static_cast<uint32_t>(std::stoul(next()));
+    }
+    std::unique_ptr<Simulation> sim;
+    SaveInfo info;
+    bool fresh = false;
+    if (!in.empty()) {
+        std::string err;
+        sim = loadWorld(in, &info, &err);
+        if (sim) std::printf("Đã tải %s: năm %ld, %d dân\n", in.c_str(), info.tick / kTicksPerYear, info.population);
+        else std::printf("Không tải được %s (%s) → tạo thế giới mới\n", in.c_str(), err.c_str());
+    }
+    if (!sim) {
+        SimConfig cfg;
+        cfg.width = size * 2;       // bản đồ trụ của hành tinh, giống game
+        cfg.height = size;
+        cfg.maxPopulation = 3000;   // vừa sức điện thoại khi tải về chơi
+        cfg.seed = seed ? seed : static_cast<uint32_t>(std::time(nullptr));
+        static const char* names[] = {"random", "pangaea", "continents", "archipelago", "ocean", "dry"};
+        for (int k = 0; k < static_cast<int>(WorldType::Count); ++k) if (wtype == names[k]) cfg.worldType = static_cast<WorldType>(k);
+        sim = std::make_unique<Simulation>(cfg);
+        Scenario sc = scenarioFromString(scen);
+        setupScenario(*sim, sc);
+        info = SaveInfo{};
+        info.scenario = static_cast<int>(sc);
+        info.worldSize = size;
+        info.camX = info.camY = -1;   // -1 = để game tự đặt camera
+        info.camZoom = 0;
+        fresh = true;
+        std::printf("Thế giới mới: %s · %s · %dx%d · seed %u\n", scenarioName(sc), worldTypeName(sim->world.type()), cfg.width, cfg.height, cfg.seed);
+    }
+    for (Entity e : sim->agents) sim->reg.get<Mind>(e).possessed = false;
+    const long ticks = static_cast<long>(std::max(0.0, seconds) * 20.0 * speed);   // 1x = 20 tick/giây
+    const int startPop = sim->stats().population;
+    const long chronStart = sim->chronicle.total();
+    auto t0 = std::chrono::steady_clock::now();
+    long done = 0;
+    bool cut = false;
+    int reseeds = 0;
+    for (; done < ticks; ++done) {
+        sim->step();
+        if (done % 600 == 0) {
+            if (reseedSapients(*sim, 6)) ++reseeds;   // giữ thế giới luôn có văn minh để theo dõi
+            double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            if (el > budget) { cut = true; break; }   // hết ngân sách thời gian của lượt chạy → phần còn lại bỏ qua
+        }
+    }
+    double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    std::printf("Đã chạy %ld / %ld tick (%.1f năm) trong %.0f giây%s; gieo mầm %d lần\n", done, ticks, done / static_cast<double>(kTicksPerYear), secs,
+                cut ? " — dừng sớm vì hết ngân sách" : "", reseeds);
+    info.title = std::string("Thế giới trên GitHub · ") + scenarioName(static_cast<Scenario>(info.scenario)) + " · " + worldTypeName(sim->world.type());
+    info.worldType = static_cast<int>(sim->world.type());
+    if (info.worldSize <= 0) info.worldSize = sim->world.height();
+    info.savedAt.clear();
+    std::string err;
+    if (!saveWorld(*sim, out, info, &err)) { std::printf("LỖI lưu: %s\n", err.c_str()); return 1; }
+    const SimStats& st = sim->stats();
+    std::printf("Đã lưu %s: năm %ld · %d dân · %d nhóm · %d quốc gia · %d loài\n", out.c_str(), sim->tick / kTicksPerYear, st.population, st.groups,
+                st.nations, st.species);
+    if (summary.empty()) return 0;
+    FILE* f = std::fopen(summary.c_str(), "wb");
+    if (!f) return 0;
+    std::fprintf(f, "## 🌍 %s\n\n", info.title.c_str());
+    std::fprintf(f, "**Năm %ld** · %d sinh vật (%d thú hoang) · %d nhóm · %d quốc gia · %d loài · %zu thiết kế · %zu quy trình hoá học\n\n",
+                 sim->tick / kTicksPerYear, st.population, st.wildPopulation, st.groups, st.nations, st.species, sim->designs.all.size(),
+                 sim->processes.all.size());
+    std::fprintf(f, "Lượt chạy này: %s+%.1f năm (%ld tick) trong %.0f giây; dân số %d → %d%s.\n\n", fresh ? "thế giới mới, " : "",
+                 done / static_cast<double>(kTicksPerYear), done, secs, startPop, st.population, cut ? " (dừng sớm vì hết ngân sách)" : "");
+    std::fprintf(f, "Mở trong game: **Menu → Lưu / Tải thế giới → Thế giới trên GitHub → Tải về** (hoặc tải `world.wbs` bên dưới, "
+                    "đổi tên thành `slot3.wbs` và chép vào thư mục `saves/` cạnh game).\n\n");
+    std::vector<const Group*> gs;
+    for (const Group& g : sim->groups) if (g.alive && g.population() >= 3) gs.push_back(&g);
+    std::sort(gs.begin(), gs.end(), [](const Group* a, const Group* b) { return a->population() > b->population(); });
+    if (!gs.empty()) {
+        std::fprintf(f, "### Các nhóm lớn nhất\n\n| Nhóm | Loài | Giai đoạn | Dân | Công trình | Thời đại | Công nghệ |\n|---|---|---|---|---|---|---|\n");
+        for (size_t i = 0; i < gs.size() && i < 12; ++i) {
+            const Group& g = *gs[i];
+            std::fprintf(f, "| %s | %s | %s | %d | %d | %s | %.1f |\n", g.displayName().c_str(), sim->species[g.species].name.c_str(),
+                         stageName(g.stage, g.animal), g.population(), g.buildingsTotal, g.era.c_str(), g.techLevel);
+        }
+        std::fprintf(f, "\n");
+    }
+    std::fprintf(f, "### Loài\n\n");
+    bool first = true;
+    for (int i = 0; i < sim->species.count(); ++i)
+        if (sim->species[i].population > 0) { std::fprintf(f, "%s%s %d", first ? "" : " · ", sim->species[i].name.c_str(), sim->species[i].population); first = false; }
+    std::fprintf(f, "\n\n### Biên niên sử gần đây\n\n");
+    const auto& ents = sim->chronicle.entries();
+    long newEvents = sim->chronicle.total() - chronStart;
+    int shown = 0;
+    for (auto it = ents.rbegin(); it != ents.rend() && shown < 30; ++it, ++shown)
+        std::fprintf(f, "- %s**năm %ld** — %s\n", shown < newEvents ? "🆕 " : "", it->tick / kTicksPerYear, it->text.c_str());
+    std::fclose(f);
+    return 0;
 }
 
 // Kiểm thử chế tạo & xây dựng của người chơi: nhập vai một người nguyên thuỷ, dùng "gợi ý thiết kế" để chế
@@ -270,6 +390,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--chemtest") return runChemTests();
     for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--genelab-test") return runGeneLabTest();
     for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--craft-test") return runCraftTest();
+    for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--live") return runLive(argc, argv);
     SimConfig cfg;
     std::string scenario = "sandbox";
     int years = 50;

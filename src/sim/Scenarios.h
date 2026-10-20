@@ -26,5 +26,8 @@ const char* scenarioName(Scenario s);
 Scenario scenarioFromString(const std::string& s);
 // Áp dụng kịch bản lên mô phỏng đã reset (có thể chỉnh cfg tốc độ tiến hoá).
 void setupScenario(Simulation& sim, Scenario s);
+// Thế giới chạy lâu dài (trên GitHub): nếu các loài có trí khôn gần tuyệt chủng (< minSapients cá thể),
+// "thần linh gieo mầm" một bộ lạc nhỏ mới ở nơi sống được. Trả về true nếu đã gieo.
+bool reseedSapients(Simulation& sim, int minSapients);
 
 } // namespace wb

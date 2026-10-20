@@ -97,6 +97,7 @@ if (WB_BUILD_GAME)
         src/app/Ui.cpp
         src/app/Text.cpp
         src/app/FirstPerson.cpp
+        src/app/Net.cpp
     )
     if (ANDROID)
         # NativeActivity nạp "libmain.so" (khai báo trong AndroidManifest.xml)

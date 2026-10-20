@@ -59,7 +59,8 @@ const char* kCategoryNames[] = {"Quan sát", "Địa hình", "Vật chất", "S�
 // Tiện ích UI tức thời (immediate mode)
 // ---------------------------------------------------------------------------
 App* gApp = nullptr;
-bool doSave(App& app, int slot, bool quiet = false);   // lưu thế giới (định nghĩa ở phần "Lưu / tải")
+bool doSave(App& app, int slot, bool quiet = false);
+bool doLoadPath(App& app, const std::string& path, const std::string& label);   // lưu thế giới (định nghĩa ở phần "Lưu / tải")
 
 bool pointInRect(Vector2 p, Rectangle r) { return p.x >= r.x && p.y >= r.y && p.x <= r.x + r.width && p.y <= r.y + r.height; }
 
@@ -1415,8 +1416,11 @@ const char* slotName(int slot) {
 
 void showToast(App& app, const std::string& t) { app.toast = t; app.toastTime = GetTime(); }
 
+std::string livePath() { return saveDir() + "github.wbs"; }
+
 void scanSlots(App& app) {
     for (int i = 0; i < App::kSlots; ++i) app.slotKnown[i] = readSaveInfo(slotPath(i), app.slotInfo[i]);
+    app.liveKnown = readSaveInfo(livePath(), app.liveInfo);
     app.slotsScanned = true;
 }
 
@@ -1439,10 +1443,10 @@ bool doSave(App& app, int slot, bool quiet) {
     return ok;
 }
 
-bool doLoad(App& app, int slot) {
+bool doLoadPath(App& app, const std::string& path, const std::string& label) {
     SaveInfo info;
     std::string err;
-    auto sim = loadWorld(slotPath(slot), &info, &err);
+    auto sim = loadWorld(path, &info, &err);
     if (!sim) { showToast(app, "Không tải được: " + err); return false; }
     if (app.sim) fpExit(app.fp, *app.sim);
     fpRelease(app.fp);
@@ -1451,20 +1455,33 @@ bool doLoad(App& app, int slot) {
     app.renderer.init(*app.sim);
     app.scenario = static_cast<Scenario>(std::clamp(info.scenario, 0, static_cast<int>(Scenario::Count) - 1));
     app.worldSize = info.worldSize > 0 ? info.worldSize : app.sim->world.height();
-    app.cam.target = {info.camX, info.camY};
-    app.cam.zoom = info.camZoom;
     app.cam.offset = {GetScreenWidth() / 2.0f, GetScreenHeight() / 2.0f};
+    if (info.camZoom > 0) {
+        app.cam.target = {info.camX, info.camY};
+        app.cam.zoom = info.camZoom;
+    } else {   // thế giới tạo ngoài game (GitHub): nhìn toàn cảnh, tâm bản đồ
+        app.cam.target = {app.sim->world.width() * kTileWorld / 2, app.sim->world.height() * kTileWorld / 2};
+        app.cam.zoom = GetScreenHeight() / (app.sim->world.height() * kTileWorld) * 1.6f;
+    }
     app.opt = RenderOptions{};
     app.globe = false;
     app.lab = GeneLab{};
+    app.craft = CraftUI{};
     app.panel = SidePanel::Chronicle;
     app.inMenu = false;
     app.savePage = false;
     app.speedIdx = 1;
     app.lastAutosave = GetTime();
     clampCamera(app);
-    showToast(app, std::string("Đã tải ") + slotName(slot) + " — năm " + std::to_string(info.tick / kTicksPerYear));
+    showToast(app, "Đã tải " + label + " — năm " + std::to_string(info.tick / kTicksPerYear));
     return true;
+}
+
+bool doLoad(App& app, int slot) { return doLoadPath(app, slotPath(slot), slotName(slot)); }
+
+void fetchLiveWorld(App& app) {
+    app.liveAutoLoad = true;
+    app.liveDl.start(liveWorldUrl(), livePath());
 }
 
 void drawSavePage(App& app) {
@@ -1472,7 +1489,7 @@ void drawSavePage(App& app) {
     int W = GetScreenWidth(), H = GetScreenHeight();
     if (!app.slotsScanned) scanSlots(app);
     ui::drawText("Lưu / Tải thế giới", 20 * s, 14 * s, 26 * s, Color{255, 220, 120, 255});
-    float bh = std::min(46 * s, (H - 120 * s) / 5.5f), y = 60 * s, x = 20 * s, w = W - 40 * s;
+    float bh = std::min(46 * s, (H - 120 * s) / 7.2f), y = 60 * s, x = 20 * s, w = W - 40 * s;
     float bw = std::min(130 * s, w * 0.22f);
     for (int i = 0; i < App::kSlots; ++i) {
         Rectangle row{x, y, w, bh * 1.5f};
@@ -1495,6 +1512,37 @@ void drawSavePage(App& app) {
         float by = row.y + (row.height - bh) / 2;
         if (app.slotKnown[i] && button({row.x + row.width - bw - 8 * s, by, bw, bh}, "Tải", false, Color{60, 110, 160, 255})) { doLoad(app, i); return; }
         if (app.sim && i > 0 && button({row.x + row.width - 2 * bw - 14 * s, by, bw, bh}, "Lưu", false, Color{60, 140, 80, 255})) doSave(app, i);
+        y += row.height + 8 * s;
+    }
+    // ---- Thế giới đang sống trên GitHub ----
+    {
+        Download::State st = app.liveDl.state();
+        if (st == Download::Done) {
+            app.liveDl.reset();
+            app.slotsScanned = false;
+            if (app.liveAutoLoad) { app.liveAutoLoad = false; doLoadPath(app, livePath(), "thế giới trên GitHub"); return; }
+        }
+        Rectangle row{x, y, w, bh * 1.9f};
+        panel(row, Color{40, 52, 80, 255});
+        float fs = 14 * s;
+        ui::drawText("Thế giới trên GitHub — chạy liên tục mỗi giờ kể cả khi bạn không mở game", row.x + 10 * s, row.y + 6 * s, fs, Color{255, 220, 120, 255});
+        std::string l2;
+        if (st == Download::Running) l2 = app.liveDl.bytes() > 0 ? fmt("Đang tải… %.1f MB", app.liveDl.bytes() / 1048576.0) : std::string("Đang tải…");
+        else if (st == Download::Failed) l2 = "Lỗi: " + app.liveDl.error();
+        else if (app.liveKnown) l2 = fmt("Bản đã tải: năm %ld · %d sinh vật · %d nhóm · %d quốc gia · lưu lúc %s", app.liveInfo.tick / kTicksPerYear,
+                                         app.liveInfo.population, app.liveInfo.groups, app.liveInfo.nations, app.liveInfo.savedAt.c_str());
+        else l2 = "Chưa tải bản nào. Bấm \"Tải về\" để lấy thế giới mới nhất.";
+        ui::drawText(l2, row.x + 10 * s, row.y + row.height * 0.40f, fs * 0.85f, st == Download::Failed ? Color{255, 150, 120, 255} : kMuted);
+        ui::drawText("Bản tải về là bản sao để chơi; bản trên GitHub vẫn tiếp tục sống.", row.x + 10 * s, row.y + row.height * 0.66f, fs * 0.75f, kMuted);
+        float by = row.y + (row.height - bh) / 2;
+        if (st != Download::Running && button({row.x + row.width - bw - 8 * s, by, bw, bh}, "Tải về", false, Color{60, 110, 160, 255})) {
+            fetchLiveWorld(app);
+        }
+        if (app.liveKnown && st != Download::Running && button({row.x + row.width - 2 * bw - 14 * s, by, bw, bh}, "Mở bản đã tải")) {
+            doLoadPath(app, livePath(), "thế giới trên GitHub");
+            return;
+        }
+        if (button({row.x + row.width - 3 * bw - 20 * s, by, bw, bh}, "Xem trên web")) OpenURL(liveWorldPage());
         y += row.height + 8 * s;
     }
     if (!app.sim) ui::drawText("Chưa có thế giới đang chạy — hãy tạo thế giới mới để có thể lưu.", x, y + 4 * s, 13 * s, kMuted);
@@ -1589,6 +1637,7 @@ void appInit(App& app) {
 
 void appStartWorld(App& app) { startWorld(app); }
 bool appLoadSlot(App& app, int slot) { return doLoad(app, slot); }
+void appFetchLiveWorld(App& app) { fetchLiveWorld(app); }
 
 void appShutdown(App& app) {
     if (app.sim) doSave(app, 0, true);   // thoát game → tự lưu

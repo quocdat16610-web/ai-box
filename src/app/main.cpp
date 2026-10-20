@@ -64,6 +64,7 @@ int main() {
     }
     if (std::getenv("WB_SAVEPAGE")) { app.inMenu = true; app.savePage = true; }
     if (const char* ld = std::getenv("WB_LOAD")) wb::appLoadSlot(app, std::atoi(ld));
+    if (std::getenv("WB_LIVE_FETCH")) { app.inMenu = true; app.savePage = true; wb::appFetchLiveWorld(app); }
     int frame = 0;
     while (!WindowShouldClose()) {
         if (autostart && std::getenv("WB_SELECT") && !std::getenv("WB_GOTO_FORGE") && frame == 2 && !app.sim->agents.empty()) {

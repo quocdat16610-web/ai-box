@@ -17,6 +17,7 @@
 #include "../sim/Simulation.h"
 #include "../sim/SaveLoad.h"
 #include "../ai/Invention.h"
+#include "Net.h"
 #include <memory>
 #include <vector>
 
@@ -67,6 +68,10 @@ struct App {
     GlobeView globeView;
     FirstPerson fp;            // góc nhìn thứ nhất / điều khiển sinh vật
     GeneLab lab;
+    // Thế giới đang sống trên GitHub (Actions chạy liên tục, lưu ở Release "live-world")
+    Download liveDl;
+    bool liveKnown = false, liveAutoLoad = false;
+    SaveInfo liveInfo;
     CraftUI craft;             // bảng chế tạo / xây dựng của người chơi
 
     // Lưu / tải thế giới: ô 0 = tự động lưu, ô 1..3 = người chơi chọn
@@ -108,5 +113,6 @@ void appStartWorld(App& app); // tạo thế giới theo app.scenario/app.worldS
 void appFrame(App& app);
 void appShutdown(App& app);
 bool appLoadSlot(App& app, int slot);   // tải thế giới đã lưu (0 = tự động lưu)
+void appFetchLiveWorld(App& app);         // tải thế giới đang sống từ GitHub rồi mở (chạy nền)
 
 } // namespace wb

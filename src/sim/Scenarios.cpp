@@ -110,6 +110,24 @@ void spawnBiodiversity(Simulation& sim, float k) {
 }
 } // namespace
 
+bool reseedSapients(Simulation& sim, int minSapients) {
+    int sapients = 0;
+    for (Entity e : sim.agents) {
+        const Body& b = sim.reg.get<Body>(e);
+        if (!b.dead && sim.species[b.species].dexterous && !sim.species[b.species].monster) ++sapients;
+    }
+    if (sapients >= minSapients) return false;
+    static const int kinds[] = {sp::Human, sp::Elf, sp::Dwarf, sp::Orc};
+    int spc = kinds[sim.rng.irange(0, 3)];
+    int x, y;
+    gUsedSpots.clear();
+    if (!findHabitat(sim, x, y, true) && !findHabitat(sim, x, y, false)) return false;
+    spawnHerd(sim, spc, 8, x, y, 2.5f);
+    sim.chronicle.add(sim.tick, EventKind::Evolution,
+                      "Thần linh gieo mầm sự sống: một bộ lạc " + sim.species[spc].name + " mới xuất hiện (các loài có trí khôn đã gần tuyệt chủng)", x, y);
+    return true;
+}
+
 void setupScenario(Simulation& sim, Scenario s) {
     gUsedSpots.clear();
     int x = sim.world.width() / 2, y = sim.world.height() / 2;

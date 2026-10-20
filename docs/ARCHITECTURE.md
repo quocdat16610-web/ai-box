@@ -573,6 +573,24 @@ liệt kê ô lưu; kèm phiên bản định dạng + dấu vân tay bố cục
 đổi tên (không hỏng ô lưu cũ khi mất điện). Kiểm thử `save_load_world`: chạy N năm → lưu → tải → chạy N năm cho kết quả giống
 hệt từng con số so với chạy liền 2N năm.
 
+### 15.4c Chế tạo & xây dựng của người chơi (`checkCraft/playerCraft/suggestDesign`, `Brain::playerBuild*`)
+Người chơi dùng **cùng** `evaluateDesign` + `canFabricate` + `workshopOf` với AI: ghép tối đa 6 bộ phận, `checkCraft` trả hiệu năng,
+vật liệu cần (túi + kho nhóm), bộ phận không gia công được kèm lý do (`fabricateProblem`: kim loại cần lò ≥ điểm chảy để đúc hoặc
+≥ 60% + búa để rèn, mảnh ghè ≤ 1.2, cần công cụ cắt ≥ ... ). `suggestDesign` dựng khung bộ phận theo mục đích rồi tối ưu tham lam
+vật liệu từng bộ phận. Thiết kế mới được đặt tên theo ngôn ngữ nhóm, vào sổ thiết kế thế giới, ghi biên niên sử nếu là kỷ lục.
+Xây dựng: `playerBuildProblem` kiểm tra quy luật vật lý (công cụ cắt — tính cả dụng cụ đang cầm, gạch nung thay đẽo đá, lò ≥ 900°C,
+biết tạo lửa, cầu trên mặt nước) rồi `finishBuilding` (dùng chung với AI) cập nhật bếp / lò / cầu của nhóm. Kiểm thử `player_craft_build`.
+
+### 15.4d Thế giới đang sống trên GitHub (`worldbox_sim --live`, `.github/workflows/live-world.yml`, `app/Net.cpp`)
+Mỗi giờ GitHub Actions: build `worldbox_sim` (có cache) → tải `world.wbs` + `state.env` từ Release `live-world` → chạy
+`(bây giờ − lần trước) × 20 tick/giây × tốc độ` (tối đa 3 giờ/lượt, ngân sách 30 phút) → lưu, viết `summary.md` (bảng nhóm, loài,
+30 sự kiện gần nhất) làm ghi chú Release và Job Summary → đăng lại tài sản (+ `backup-<thứ>.wbs` xoay vòng 7 ngày). Lưu ở Release
+thay vì commit để lịch sử git không phình. `reseedSapients`: nếu loài có trí khôn còn < 6 cá thể, "thần linh gieo mầm" một bộ lạc
+mới để thế giới chạy vô thời hạn vẫn có văn minh. Tệp `.wbs` mới trong `world/upload/` (nhận diện bằng sha256) được dùng làm thế giới
+mới một lần. Game tải về bằng `Download` chạy nền: PC gọi `curl` của hệ điều hành, Android dùng `HttpURLConnection` qua JNI (quyền
+INTERNET); tải vào tệp tạm rồi đổi tên. Lưu ý: GitHub tạm dừng lịch chạy của repo công khai sau 60 ngày không có hoạt động — bấm
+*Enable workflow* trong tab Actions để bật lại.
+
 ### 15.5 Phòng thí nghiệm gen (`GeneLab`, `CustomGene`, `addCustomGene`)
 Bản nháp loài = bản sao loài gốc; có thể lai 50/50 hoặc lấy từng phần (trí tuệ & tay, hình dáng, môi trường, thức ăn, màu, sức
 mạnh, gen tự tạo) từ loài cho gen, chỉnh 13 gen, chỉnh ngoại hình & sinh thái, và **tạo gen mới** gồm tên + hiệu ứng (14 loại) +
