@@ -16,6 +16,7 @@
 #include "../sim/Scenarios.h"
 #include "../sim/Simulation.h"
 #include "../sim/SaveLoad.h"
+#include "../ai/Invention.h"
 #include <memory>
 #include <vector>
 
@@ -40,6 +41,17 @@ struct GeneLab {
     double messageTime = -10;
 };
 
+// Bảng chế tạo & xây dựng của người chơi (khi điều khiển một sinh vật)
+struct CraftUI {
+    bool open = false;
+    int tab = 0;                 // 0 chế tạo, 1 xây dựng
+    int purpose = 0;             // mục đích đang thiết kế (Purpose)
+    std::vector<Part> parts;     // bản thiết kế đang ghép
+    bool started = false;        // đã điền gợi ý ban đầu chưa
+    std::string msg;
+    double msgTime = -10;
+};
+
 struct App {
     std::unique_ptr<Simulation> sim;
     Renderer renderer;
@@ -55,6 +67,7 @@ struct App {
     GlobeView globeView;
     FirstPerson fp;            // góc nhìn thứ nhất / điều khiển sinh vật
     GeneLab lab;
+    CraftUI craft;             // bảng chế tạo / xây dựng của người chơi
 
     // Lưu / tải thế giới: ô 0 = tự động lưu, ô 1..3 = người chơi chọn
     static constexpr int kSlots = 4;

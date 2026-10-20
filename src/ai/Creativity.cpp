@@ -121,8 +121,8 @@ float heldValue(const Simulation& sim, Entity e, Purpose p) {
 Workshop workshopOf(Simulation& sim, Entity e) {
     Workshop ws;
     const Mind& m = sim.reg.get<Mind>(e);
-    ws.cut = std::max(0.5f, m.know.bestValue(sim.designs, Purpose::Cut));
-    ws.smash = std::max(1.0f, m.know.bestValue(sim.designs, Purpose::Smash));
+    ws.cut = std::max({0.5f, m.know.bestValue(sim.designs, Purpose::Cut), heldValue(sim, e, Purpose::Cut)});      // biết làm hoặc đang cầm
+    ws.smash = std::max({1.0f, m.know.bestValue(sim.designs, Purpose::Smash), heldValue(sim, e, Purpose::Smash)});
     ws.heat = 20;
     if (m.know.bestValue(sim.designs, Purpose::FireStart) >= 260) ws.heat = 650; // tự nhóm được lửa trại
     if (Group* g = groupOfEntity(sim, e)) {
@@ -363,6 +363,185 @@ bool craftDesign(Simulation& sim, Entity e, int designId, Purpose slot) {
     inv.item[static_cast<int>(slot)] = static_cast<int16_t>(designId);
     inv.wear[static_cast<int>(slot)] = 255;
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Người chơi tự thiết kế & chế tạo
+// ---------------------------------------------------------------------------
+std::string fabricateProblem(const MaterialRegistry& reg, const Part& p, const Workshop& ws) {
+    if (canFabricate(reg, p, ws)) return "";
+    const MaterialDef& d = reg[p.mat];
+    char buf[200];
+    if (d.metal) {
+        std::snprintf(buf, sizeof(buf), "%s là kim loại: cần lò ≥ %.0f°C để đúc, hoặc ≥ %.0f°C + búa đập ≥ %.1f để rèn (đang có lò %.0f°C, búa %.1f)",
+                      d.name.c_str(), d.meltPoint, d.meltPoint * 0.6f, d.hardness, ws.heat, ws.smash);
+        return buf;
+    }
+    bool carveable = d.organic || p.mat == mat::Wood || p.mat == mat::Bone;
+    switch (p.shape) {
+    case Shape::Lump: case Shape::Head: return d.name + " quá mềm / rời rạc để làm cục cứng";
+    case Shape::Shaft: return d.name + " quá mềm để làm cán";
+    case Shape::Cord: return "Dây chỉ làm được từ sợi thực vật, da (hoặc kim loại dẻo đã rèn)";
+    case Shape::Flake: return d.name + " không ghè thành mảnh sắc được (cần đá cứng & giòn như đá lửa, đá vỏ chai)";
+    case Shape::Point: case Shape::Blade:
+        if (d.hardness < 2.0f) return d.name + " quá mềm, không giữ được cạnh sắc";
+        if (knappable(d)) return "Mảnh ghè từ " + d.name + " chỉ làm được cỡ nhỏ (≤ 1.2)";
+        std::snprintf(buf, sizeof(buf), "Cần công cụ cắt ≥ %.1f để đẽo %s (đang có %.1f)", carveable ? d.hardness * 0.8f : d.hardness, d.name.c_str(), ws.cut);
+        return buf;
+    case Shape::Sheet: return p.mat == mat::Hide ? std::string("Cần công cụ cắt để lột da") : "Tấm chỉ làm từ da, sợi hoặc kim loại rèn";
+    case Shape::Bowl: std::snprintf(buf, sizeof(buf), "Vật chứa: dùng đất sét, hoặc cần công cụ cắt ≥ 3 (đang có %.1f)", ws.cut); return buf;
+    case Shape::Plank: std::snprintf(buf, sizeof(buf), "Ván chỉ làm từ gỗ, cần công cụ cắt ≥ 2 (đang có %.1f)", ws.cut); return buf;
+    case Shape::Wheel: std::snprintf(buf, sizeof(buf), "Bánh xe gỗ cần công cụ cắt ≥ 3 (đang có %.1f)", ws.cut); return buf;
+    case Shape::Limb: return d.hardness < 1.5f ? d.name + " quá mềm để làm thân đàn hồi" : std::string("Cần công cụ cắt ≥ 2 để đẽo cánh cung");
+    case Shape::Pipe: return "Ống: dùng đất sét, gỗ (cắt ≥ 3) hoặc kim loại đúc";
+    case Shape::Wall: return "Tường lò phải là vật liệu rắn, không cháy (đá, đất sét, gạch)";
+    default: return "Không gia công được";
+    }
+}
+
+CraftCheck checkCraft(Simulation& sim, Entity e, const std::vector<Part>& parts, Purpose p) {
+    CraftCheck c;
+    const MaterialRegistry& R = sim.world.materials;
+    if (parts.empty()) { c.problem = "Chưa có bộ phận nào"; return c; }
+    Workshop ws = workshopOf(sim, e);
+    for (size_t i = 0; i < parts.size(); ++i) {
+        std::string pr = fabricateProblem(R, parts[i], ws);
+        if (!pr.empty()) { c.badPart = static_cast<int>(i); c.problem = pr; break; }
+    }
+    for (const Part& pt : parts) {
+        int n = partCost(R, pt);
+        auto it = std::find_if(c.need.begin(), c.need.end(), [&](auto& x) { return x.first == pt.mat; });
+        if (it == c.need.end()) c.need.push_back({pt.mat, n}); else it->second += n;
+    }
+    for (auto& [mt, n] : c.need)
+        if (availableMat(sim, e, mt) < n) { c.missing = mt; break; }
+    c.existing = sim.designs.findSame(parts, p);
+    c.props = evaluateDesign(R, parts);
+    if (c.existing >= 0) c.quality = sim.designs[c.existing].quality;
+    else c.quality = 0.8f + 0.4f * sim.reg.get<Mind>(e).skillOf(Skill::Crafting);
+    c.value = c.props.v[static_cast<int>(p)] * c.quality;
+    if (c.badPart < 0 && c.value <= 0) c.problem = std::string("Thiết kế này không dùng được cho việc ") + purposeName(p);
+    return c;
+}
+
+int playerCraft(Simulation& sim, Entity e, const std::vector<Part>& parts, Purpose p, std::string& msg) {
+    CraftCheck c = checkCraft(sim, e, parts, p);
+    const MaterialRegistry& R = sim.world.materials;
+    if (c.badPart >= 0) { msg = "Bộ phận " + std::to_string(c.badPart + 1) + ": " + c.problem; return -1; }
+    if (c.value <= 0) { msg = c.problem; return -1; }
+    if (c.missing != kNoMat) { msg = "Thiếu " + R[c.missing].name + " — đi thu thập thêm"; return -1; }
+    for (auto& [mt, n] : c.need) consumeMat(sim, e, mt, n);
+    Mind& m = sim.reg.get<Mind>(e);
+    Knowhow& K = m.know;
+    DesignRegistry& D = sim.designs;
+    int id = c.existing;
+    bool brandNew = id < 0;
+    int prevWorldBest = D.worldBest[static_cast<int>(p)];
+    float prevWorld = prevWorldBest >= 0 ? D[prevWorldBest].value(p) : 0.0f;
+    if (brandNew) {
+        Design d;
+        d.parts = parts;
+        d.props = c.props;
+        d.quality = c.quality;
+        d.primary = p;
+        const Social& so = sim.reg.get<Social>(e);
+        d.group = so.group;
+        d.inventor = so.name;
+        d.tick = sim.tick;
+        float bestA = -1;
+        for (const Part& pt : parts) {
+            float a = R.advancement(pt.mat) * (pt.shape == Shape::Shaft || pt.shape == Shape::Cord ? 0.3f : 1.0f);
+            if (a > bestA) { bestA = a; d.mainMat = pt.mat; }
+        }
+        d.name = designName(sim, e, p, parts);
+        id = D.add(d);
+        K.inventions++;
+        sim.statsMut().inventSuccess++;
+    }
+    K.learnDesign(D, id);
+    Inventory& inv = sim.reg.get<Inventory>(e);
+    inv.item[static_cast<int>(p)] = static_cast<int16_t>(id);
+    inv.wear[static_cast<int>(p)] = 255;
+    m.skill[static_cast<int>(Skill::Crafting)] = std::min(1.0f, m.skillOf(Skill::Crafting) + 0.03f);
+    const Design& nd = D[id];
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.1f", nd.value(p));
+    if (brandNew && D.worldBest[static_cast<int>(p)] == id && (prevWorldBest < 0 || nd.value(p) > prevWorld * 1.25f)) {
+        const Social& so = sim.reg.get<Social>(e);
+        Group* g = sim.group(so.group);
+        const Transform& tr = sim.reg.get<Transform>(e);
+        sim.chronicle.add(sim.tick, EventKind::Discovery,
+                          so.name + (g ? " (" + g->displayName() + ")" : std::string()) + " chế ra \"" + nd.name + "\" = " + nd.recipe(R) + " → " +
+                              purposeName(p) + " " + buf + (prevWorldBest < 0 ? " (lần đầu trên thế giới)" : " (kỷ lục mới)"),
+                          static_cast<int>(tr.pos.x), static_cast<int>(tr.pos.y));
+    }
+    for (const Part& pt : parts) {
+        if (pt.shape == Shape::Shaft) experience(sim, e, Concept::Leverage, 0.3f);
+        if (pt.shape == Shape::Wheel) experience(sim, e, Concept::Rotation, 0.3f);
+        if (pt.shape == Shape::Plank || pt.shape == Shape::Bowl) experience(sim, e, Concept::Buoyancy, 0.15f);
+        if (pt.shape == Shape::Limb) experience(sim, e, Concept::Elasticity, 0.3f);
+    }
+    msg = std::string(brandNew ? "Phát minh mới: " : "Chế tạo xong: ") + nd.name + " (" + purposeName(p) + " " + buf + ")";
+    return id;
+}
+
+std::vector<MatId> craftableMaterials(Simulation& sim, Entity e) {
+    std::vector<MatId> out;
+    auto add = [&](MatId m) { if (m != kNoMat && std::find(out.begin(), out.end(), m) == out.end()) out.push_back(m); };
+    const Inventory& inv = sim.reg.get<Inventory>(e);
+    if (inv.wood > 0) add(mat::Wood);
+    if (inv.stone > 0) add(mat::Stone);
+    for (auto& [m, n] : inv.mats) if (n > 0) add(m);
+    if (Group* g = groupOfEntity(sim, e)) {
+        if (g->wood > 0) add(mat::Wood);
+        if (g->stone > 0) add(mat::Stone);
+        for (auto& [m, n] : g->mats) if (n > 0) add(m);
+    }
+    for (MatId m : sim.reg.get<Mind>(e).know.materials) add(m);
+    add(mat::Wood); add(mat::Stone);
+    std::stable_sort(out.begin(), out.end(), [&](MatId a, MatId b) { return availableMat(sim, e, a) > availableMat(sim, e, b); });
+    return out;
+}
+
+std::vector<Part> suggestDesign(Simulation& sim, Entity e, Purpose p) {
+    std::vector<Part> parts;
+    auto P = [&](Shape s, float size) { parts.push_back({mat::Wood, s, size}); };
+    switch (p) {
+    case Purpose::Cut: P(Shape::Blade, 1.0f); P(Shape::Shaft, 1.0f); break;
+    case Purpose::Dig: P(Shape::Point, 1.0f); P(Shape::Shaft, 1.2f); break;
+    case Purpose::Pierce: P(Shape::Point, 1.0f); P(Shape::Shaft, 1.6f); break;
+    case Purpose::Smash: P(Shape::Head, 1.2f); P(Shape::Shaft, 1.0f); break;
+    case Purpose::Ranged: P(Shape::Limb, 1.2f); P(Shape::Cord, 1.0f); P(Shape::Point, 0.6f); break;
+    case Purpose::Siege: P(Shape::Limb, 2.0f); P(Shape::Cord, 1.0f); break;
+    case Purpose::Carry: P(Shape::Sheet, 1.2f); break;
+    case Purpose::Float: P(Shape::Plank, 1.5f); P(Shape::Plank, 1.5f); break;
+    case Purpose::Heat: P(Shape::Wall, 1.0f); P(Shape::Wall, 1.0f); break;
+    case Purpose::FireStart: P(Shape::Shaft, 0.8f); P(Shape::Plank, 0.6f); P(Shape::Cord, 0.6f); break;
+    case Purpose::Warmth: P(Shape::Sheet, 1.2f); P(Shape::Cord, 0.6f); break;
+    default: P(Shape::Lump, 1.0f); break;
+    }
+    // Tối ưu tham lam: với từng bộ phận, chọn vật liệu cho hiệu năng cao nhất mà gia công được (ưu tiên thứ đang có đủ)
+    const MaterialRegistry& R = sim.world.materials;
+    Workshop ws = workshopOf(sim, e);
+    std::vector<MatId> mats = craftableMaterials(sim, e);
+    for (int pass = 0; pass < 2; ++pass)
+        for (Part& pt : parts) {
+            MatId best = pt.mat;
+            float bestScore = -1e9f;
+            for (MatId m : mats) {
+                Part trial = pt;
+                trial.mat = m;
+                if (!canFabricate(R, trial, ws)) continue;
+                Part keep = pt;
+                pt = trial;
+                float v = evaluateDesign(R, parts).v[static_cast<int>(p)];
+                pt = keep;
+                float score = v + (availableMat(sim, e, m) >= partCost(R, trial) ? 1000.0f : 0.0f);
+                if (score > bestScore) { bestScore = score; best = m; }
+            }
+            pt.mat = best;
+        }
+    return parts;
 }
 
 void observeReaction(Simulation& sim, Entity e, const ReactionEvent& ev) {

@@ -211,6 +211,28 @@ InventResult realizeIdea(Simulation& sim, Entity e);
 // Chế tạo lại một thiết kế đã biết (cần vật liệu + năng lực chế tạo).
 bool craftDesign(Simulation& sim, Entity e, int designId, Purpose slot);
 MatId missingForDesign(Simulation& sim, Entity e, int designId);
+// ---- Người chơi tự thiết kế & chế tạo (cùng luật vật lý với AI) ----
+struct CraftCheck {
+    DesignProps props;
+    float value = 0;                            // hiệu năng cho mục đích đã chọn (đã nhân tay nghề)
+    float quality = 1;
+    std::vector<std::pair<MatId, int>> need;    // vật liệu cần (gộp theo loại)
+    MatId missing = kNoMat;                     // vật liệu còn thiếu
+    int badPart = -1;                           // bộ phận không gia công được
+    std::string problem;                        // lý do (tiếng Việt)
+    int existing = -1;                          // đã có thiết kế giống hệt trên thế giới
+    bool ok() const { return badPart < 0 && missing == kNoMat && value > 0; }
+};
+// Lý do không gia công được bộ phận với công cụ / lò hiện có ("" nếu làm được)
+std::string fabricateProblem(const MaterialRegistry& reg, const Part& p, const Workshop& ws);
+CraftCheck checkCraft(Simulation& sim, Entity e, const std::vector<Part>& parts, Purpose p);
+// Chế tạo thiết kế người chơi tự ghép: tiêu vật liệu thật, ghi nhận thiết kế (đặt tên theo ngôn ngữ nhóm),
+// trang bị vào ô của mục đích. Trả về id thiết kế (-1 nếu thất bại), msg = kết quả.
+int playerCraft(Simulation& sim, Entity e, const std::vector<Part>& parts, Purpose p, std::string& msg);
+// Vật liệu người chơi dùng được: đã biết + đang mang + trong kho nhóm (sắp theo số lượng có sẵn)
+std::vector<MatId> craftableMaterials(Simulation& sim, Entity e);
+// Gợi ý: bộ khung bộ phận hợp lý cho mục đích, chọn vật liệu tốt nhất đang có (tối ưu tham lam từng bộ phận)
+std::vector<Part> suggestDesign(Simulation& sim, Entity e, Purpose p);
 // Học từ quan sát: phản ứng hoá học / sự kiện vật lý nhìn thấy được.
 void observeReaction(Simulation& sim, Entity e, const ReactionEvent& ev);
 void observePhysEvent(Simulation& sim, Entity e, int physKind, MatId m);

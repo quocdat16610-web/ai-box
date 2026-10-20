@@ -817,7 +817,8 @@ void handleFpInput(App& app) {
         if (IsKeyPressed(KEY_F) || IsKeyPressed(KEY_J)) fpAction(app, Brain::PlayerAct::Attack);
         if (IsKeyPressed(KEY_E)) fpAction(app, Brain::PlayerAct::Eat);
         if (IsKeyPressed(KEY_G)) fpAction(app, Brain::PlayerAct::Gather);
-        if (IsKeyPressed(KEY_B)) fpAction(app, Brain::PlayerAct::BuildHut);
+        if (IsKeyPressed(KEY_B)) { app.craft.open = true; app.craft.tab = 1; }
+        if (IsKeyPressed(KEY_C)) { app.craft.open = true; app.craft.tab = 0; }
         float L = std::sqrt(move.x * move.x + move.y * move.y);
         if (L > 0.05f) {
             if (L > 1) { move.x /= L; move.y /= L; }
@@ -901,11 +902,19 @@ void drawFpHud(App& app) {
     for (int i = 0; i < 3; ++i)
         if (button({W - ms - 10 * s + i * (ms / 3), ms + 16 * s, ms / 3 - 3 * s, 30 * s}, kSpeedLabels[i], app.speedIdx == i)) app.speedIdx = i;
     if (fp.control) {
-        const char* names[] = {"Tấn công", "Ăn", "Thu thập", "Dựng lều"};
-        const Brain::PlayerAct acts[] = {Brain::PlayerAct::Attack, Brain::PlayerAct::Eat, Brain::PlayerAct::Gather, Brain::PlayerAct::BuildHut};
-        int n = sd.dexterous ? 4 : 2;
-        for (int i = 0; i < n; ++i)
-            if (button({W - bw - 10 * s - (i % 2) * (bw + gap), by - (1 + i / 2) * (bh + gap), bw, bh}, names[i], false, Color{90, 60, 50, 235})) fpAction(app, acts[i]);
+        const char* names[] = {"Tấn công", "Ăn", "Thu thập", "Xây dựng", "Chế tạo"};
+        const Brain::PlayerAct acts[] = {Brain::PlayerAct::Attack, Brain::PlayerAct::Eat, Brain::PlayerAct::Gather};
+        int n = sd.dexterous ? 5 : 4;   // thú: tấn công, ăn, (không thu thập), xây hang ổ
+        for (int i = 0, slot = 0; i < 5 && slot < n; ++i) {
+            if (!sd.dexterous && (i == 2 || i == 4)) continue;
+            Rectangle br{W - bw - 10 * s - (slot % 2) * (bw + gap), by - (1 + slot / 2) * (bh + gap), bw, bh};
+            ++slot;
+            bool panelBtn = i >= 3;
+            if (button(br, names[i], false, panelBtn ? Color{60, 80, 130, 235} : Color{90, 60, 50, 235})) {
+                if (!panelBtn) fpAction(app, acts[i]);
+                else { app.craft.open = true; app.craft.tab = i == 4 ? 0 : 1; }
+            }
+        }
         // Cần điều khiển ảo
         float rad = 60 * s;
         Vector2 o = fp.stick ? fp.stickOrigin : Vector2{20 * s + rad, H - 20 * s - rad};
@@ -915,9 +924,155 @@ void drawFpHud(App& app) {
         float dx = k.x - o.x, dy = k.y - o.y, L = std::sqrt(dx * dx + dy * dy);
         if (L > rad) { k.x = o.x + dx / L * rad; k.y = o.y + dy / L * rad; }
         DrawCircleV(k, rad * 0.42f, Color{255, 255, 255, 120});
-        ui::drawText("WASD/cần ảo: đi · kéo: nhìn · F tấn công · E ăn · G thu thập · B dựng lều · Tab thoát", 10 * s, pr.y + pr.height + 6 * s, 11 * s, Color{230, 230, 240, 200});
+        ui::drawText("WASD/cần ảo: đi · kéo: nhìn · F tấn công · E ăn · G thu thập · C chế tạo · B xây dựng · Tab thoát", 10 * s, pr.y + pr.height + 6 * s, 11 * s, Color{230, 230, 240, 200});
     } else {
         ui::drawText("Kéo màn hình để nhìn quanh · bấm \"Điều khiển\" để nhập vai sinh vật này", 10 * s, pr.y + pr.height + 6 * s, 12 * s, Color{230, 230, 240, 210});
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bảng chế tạo & xây dựng của người chơi
+// ---------------------------------------------------------------------------
+int cycler(Rectangle r, const std::string& label, int idx, int count);
+bool slider(Rectangle r, float& v, float lo, float hi, const std::string& label, Color c);
+
+void craftNote(CraftUI& C, const std::string& m) { C.msg = m; C.msgTime = GetTime(); }
+
+void drawCraftPanel(App& app) {
+    Simulation& sim = *app.sim;
+    FirstPerson& fp = app.fp;
+    CraftUI& C = app.craft;
+    if (!sim.reg.valid(fp.who)) { C.open = false; return; }
+    const MaterialRegistry& R = sim.world.materials;
+    float s = app.uiScale;
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    Entity me = fp.who;
+    Mind& m = sim.reg.get<Mind>(me);
+    Inventory& inv = sim.reg.get<Inventory>(me);
+    Rectangle full{8 * s, 8 * s, W - 16 * s, H - 16 * s};
+    panel(full, Color{14, 16, 24, 240});
+    float bh = 36 * s;
+    const char* tabs[] = {"Chế tạo", "Xây dựng"};
+    for (int i = 0; i < 2; ++i)
+        if (button({full.x + 12 * s + i * (130 * s), full.y + 8 * s, 124 * s, bh}, tabs[i], C.tab == i)) C.tab = i;
+    if (button({full.x + full.width - 44 * s, full.y + 8 * s, 38 * s, bh}, "x")) { C.open = false; return; }
+    bool wide = W > H;
+    float top = full.y + bh + 18 * s;
+    std::string bag = fmt("Túi: %d gỗ · %d đá · %d khác  (dùng cả kho chung của nhóm)", inv.wood, inv.stone, inv.matTotal());
+    if (wide) ui::drawText(bag, full.x + 280 * s, full.y + 18 * s, 12 * s, kMuted);
+    else { ui::drawText(bag, full.x + 12 * s, top - 4 * s, 12 * s, kMuted); top += 14 * s; }
+    float rowH = std::min(34 * s, (full.height - bh - 40 * s) / 13.0f);
+    if (C.tab == 0) {
+        // ================= CHẾ TẠO =================
+        Purpose P = static_cast<Purpose>(C.purpose);
+        if (!C.started) { C.parts = suggestDesign(sim, me, P); C.started = true; }
+        float colW = wide ? (full.width - 36 * s) * 0.58f : full.width - 24 * s;
+        float x0 = full.x + 12 * s, y = top;
+        ui::drawText("Thiết kế mới — ghép bộ phận (vật liệu × hình dạng × kích thước); hiệu năng tính theo vật lý", x0, y, 12 * s, kMuted);
+        y += 18 * s;
+        int np = cycler({x0, y, colW * 0.6f, rowH}, std::string("Mục đích: ") + purposeName(P), C.purpose, kPurposeCount);
+        if (np != C.purpose) { C.purpose = np; P = static_cast<Purpose>(np); C.parts = suggestDesign(sim, me, P); }
+        if (button({x0 + colW * 0.6f + 6 * s, y, colW * 0.4f - 6 * s, rowH}, "Gợi ý thiết kế", false, Color{70, 90, 140, 255})) C.parts = suggestDesign(sim, me, P);
+        y += rowH + 8 * s;
+        std::vector<MatId> mats = craftableMaterials(sim, me);
+        Workshop ws = workshopOf(sim, me);
+        int remove = -1;
+        for (size_t i = 0; i < C.parts.size(); ++i) {
+            Part& pt = C.parts[i];
+            int mi = 0;
+            for (size_t k = 0; k < mats.size(); ++k) if (mats[k] == pt.mat) mi = static_cast<int>(k);
+            if (mats.empty()) break;
+            bool bad = !canFabricate(R, pt, ws);
+            std::string ml = R[pt.mat].name + fmt(" (%d)", availableMat(sim, me, pt.mat));
+            if (bad) DrawRectangleRounded({x0 - 4 * s, y - 2 * s, colW + 8 * s, rowH + 4 * s}, 0.2f, 4, Color{120, 40, 40, 120});
+            int nmi = cycler({x0, y, colW * 0.34f, rowH}, ml, mi, static_cast<int>(mats.size()));
+            pt.mat = mats[nmi];
+            pt.shape = static_cast<Shape>(cycler({x0 + colW * 0.35f, y, colW * 0.26f, rowH}, shapeName(pt.shape), static_cast<int>(pt.shape), kShapeCount));
+            slider({x0 + colW * 0.62f, y, colW * 0.38f - rowH - 4 * s, rowH}, pt.size, 0.3f, 3.0f, "cỡ", kAccent);
+            if (button({x0 + colW - rowH, y, rowH, rowH}, "x")) remove = static_cast<int>(i);
+            y += rowH + 4 * s;
+        }
+        if (remove >= 0) C.parts.erase(C.parts.begin() + remove);
+        if (C.parts.size() < 6 && button({x0, y, colW * 0.4f, rowH}, "+ Thêm bộ phận")) C.parts.push_back({static_cast<MatId>(mats.empty() ? mat::Wood : mats[0]), Shape::Shaft, 1.0f});
+        y += rowH + 8 * s;
+        // ---- Xem trước ----
+        CraftCheck ck = checkCraft(sim, me, C.parts, P);
+        Writer w{x0, y, colW, 13 * s};
+        w.line(fmt("%s: %.1f   · nặng %.1f kg · độ bền %.0f · tay nghề ×%.2f", purposeName(P), ck.value, ck.props.mass, ck.props.durability, ck.quality), kAccent);
+        float cur = m.know.bestValue(sim.designs, P);
+        if (cur > 0) w.line(fmt("Thiết kế tốt nhất đang biết: %.1f  →  %s", cur, ck.value > cur ? "TỐT HƠN" : "chưa hơn"), ck.value > cur ? Color{140, 230, 140, 255} : kMuted);
+        std::string need = "Cần: ";
+        for (auto& [mt, n] : ck.need) need += R[mt].name + fmt(" ×%d (có %d)  ", n, availableMat(sim, me, mt));
+        w.wrapped(need, ck.missing != kNoMat ? Color{255, 150, 120, 255} : kText, full.y + full.height);
+        if (!ck.problem.empty()) w.wrapped((ck.badPart >= 0 ? fmt("Bộ phận %d: ", ck.badPart + 1) : std::string()) + ck.problem, Color{255, 130, 110, 255}, full.y + full.height);
+        else if (ck.existing >= 0) w.line("Thiết kế này đã có trên thế giới: " + sim.designs[ck.existing].name, kMuted);
+        float cy = std::max(w.y + 6 * s, y + 60 * s);
+        if (cy + rowH * 1.3f > full.y + full.height - 6 * s) cy = full.y + full.height - rowH * 1.3f - 6 * s;
+        if (button({x0, cy, colW, rowH * 1.3f}, "CHẾ TẠO", false, ck.ok() ? Color{60, 140, 80, 255} : Color{70, 70, 80, 255})) {
+            std::string msg;
+            playerCraft(sim, me, C.parts, P, msg);
+            craftNote(C, msg);
+            fp.actAnim = 1.0f; fp.actKind = 2;
+        }
+        // ---- Thiết kế đã biết (làm lại nhanh) ----
+        float rx = wide ? x0 + colW + 12 * s : x0, ry = wide ? top : cy + rowH * 1.3f + 10 * s, rw = wide ? full.x + full.width - rx - 12 * s : colW;
+        ui::drawText(std::string("Đã biết làm (") + purposeName(P) + ")", rx, ry, 13 * s, kAccent);
+        ry += 18 * s;
+        std::vector<int> known;
+        for (int id : m.know.designs) if (sim.designs[id].value(P) > 0) known.push_back(id);
+        if (Group* g = sim.group(sim.reg.get<Social>(me).group)) {   // thiết kế tốt nhất của nhóm: học lại từ đồng loại
+            int gb = g->bestDesign[C.purpose];
+            if (gb >= 0 && std::find(known.begin(), known.end(), gb) == known.end()) known.push_back(gb);
+        }
+        std::sort(known.begin(), known.end(), [&](int a, int b) { return sim.designs[a].value(P) > sim.designs[b].value(P); });
+        int held = inv.item[C.purpose];
+        if (held >= 0) { ui::drawText("Đang mang: " + sim.designs[held].name + fmt(" (%.1f)", sim.designs[held].value(P)), rx, ry, 12 * s, Color{255, 220, 110, 255}); ry += 16 * s; }
+        if (known.empty()) { ui::drawText("Chưa biết thiết kế nào cho việc này", rx, ry, 12 * s, kMuted); }
+        for (size_t i = 0; i < known.size() && ry + rowH * 1.6f < full.y + full.height; ++i) {
+            const Design& d = sim.designs[known[i]];
+            MatId miss = missingForDesign(sim, me, known[i]);
+            Rectangle rr{rx, ry, rw, rowH * 1.5f};
+            DrawRectangleRounded(rr, 0.15f, 4, Color{30, 34, 48, 255});
+            ui::drawText(d.name + fmt("  %.1f", d.value(P)), rr.x + 6 * s, rr.y + 3 * s, 13 * s, kText);
+            ui::drawText(d.recipe(R) + (miss != kNoMat ? "  — thiếu " + R[miss].name : ""), rr.x + 6 * s, rr.y + 19 * s, 10 * s, miss != kNoMat ? Color{255, 150, 120, 255} : kMuted);
+            if (button({rr.x + rr.width - 74 * s, rr.y + 4 * s, 70 * s, rr.height - 8 * s}, "Làm", false, miss == kNoMat ? Color{60, 140, 80, 255} : Color{70, 70, 80, 255})) {
+                m.know.learnDesign(sim.designs, known[i]);
+                if (craftDesign(sim, me, known[i], P)) craftNote(C, "Chế tạo xong: " + d.name);
+                else craftNote(C, miss != kNoMat ? "Thiếu " + R[miss].name : "Chưa đủ công cụ / lò để làm lại thiết kế này");
+                fp.actAnim = 1.0f; fp.actKind = 2;
+            }
+            if (button({rr.x + rr.width - 150 * s, rr.y + 4 * s, 70 * s, rr.height - 8 * s}, "Sửa")) C.parts = d.parts;
+            ry += rr.height + 6 * s;
+        }
+    } else {
+        // ================= XÂY DỰNG =================
+        Vec2 f = fpFacing(fp);
+        int wood, stone, metal;
+        Brain::buildStock(sim, me, wood, stone, metal);
+        ui::drawText(fmt("Xây ở ô ngay trước mặt (quay mặt về chỗ muốn xây) · đang có %d gỗ, %d đá, %d kim loại", wood, stone, metal), full.x + 12 * s, top, 12 * s, kMuted);
+        std::vector<Building> list = Brain::playerBuildList(sim, me);
+        int cols = wide ? 2 : 1;
+        float cw = (full.width - 24 * s - (cols - 1) * 8 * s) / cols, ch = std::min(rowH * 1.6f, (full.height - (top - full.y) - 30 * s) / ((list.size() + cols - 1) / cols) - 6 * s);
+        for (size_t i = 0; i < list.size(); ++i) {
+            Building b = list[i];
+            const BuildingInfo& bi = buildingInfo(b);
+            Rectangle rr{full.x + 12 * s + (i % cols) * (cw + 8 * s), top + 20 * s + (i / cols) * (ch + 6 * s), cw, ch};
+            std::string pr = Brain::playerBuildProblem(sim, me, b, f);
+            DrawRectangleRounded(rr, 0.15f, 4, pr.empty() ? Color{30, 52, 36, 255} : Color{30, 34, 48, 255});
+            std::string cost = fmt("%d gỗ", bi.wood) + (bi.stone ? fmt(" · %d đá", bi.stone) : "") + (bi.metal ? fmt(" · %d kim loại", bi.metal) : "") +
+                               (bi.housing ? fmt(" · ở %d", bi.housing) : "");
+            ui::drawText(std::string(bi.name) + "  —  " + cost, rr.x + 6 * s, rr.y + 3 * s, std::min(13 * s, ch * 0.42f), kText);
+            ui::drawText(pr.empty() ? "Xây được ngay" : pr, rr.x + 6 * s, rr.y + ch * 0.55f, std::min(10 * s, ch * 0.3f), pr.empty() ? Color{140, 230, 140, 255} : Color{255, 160, 130, 255});
+            if (button({rr.x + rr.width - 70 * s, rr.y + 4 * s, 66 * s, rr.height - 8 * s}, "Xây", false, pr.empty() ? Color{60, 140, 80, 255} : Color{70, 70, 80, 255})) {
+                craftNote(C, Brain::playerBuild(sim, me, b, f));
+                fp.actAnim = 1.0f; fp.actKind = 3;
+            }
+        }
+    }
+    if (!C.msg.empty() && GetTime() - C.msgTime < 4.0) {
+        float fs = 15 * s, tw = ui::measureText(C.msg, fs);
+        DrawRectangleRounded({(W - tw) / 2 - 8 * s, full.y + full.height - fs - 18 * s, tw + 16 * s, fs + 10 * s}, 0.3f, 4, Color{0, 0, 0, 220});
+        ui::drawText(C.msg, (W - tw) / 2, full.y + full.height - fs - 13 * s, fs, Color{255, 235, 170, 255});
     }
 }
 
@@ -1486,6 +1641,10 @@ void appFrame(App& app) {
     if (!app.fp.active && (IsKeyPressed(KEY_BACK) || IsKeyPressed(KEY_ESCAPE))) { app.inMenu = true; doSave(app, 0, true); } // nút Back Android → tự lưu
 
     if (app.lab.open) { /* phòng thí nghiệm gen chiếm toàn màn hình */ }
+    else if (app.fp.active && app.craft.open) {   // bảng chế tạo / xây dựng: đứng yên, Esc để đóng
+        if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_BACK) || IsKeyPressed(KEY_TAB)) app.craft.open = false;
+        if (app.sim->reg.valid(app.fp.who)) app.sim->reg.get<Transform>(app.fp.who).moving = false;
+    }
     else if (app.fp.active) handleFpInput(app);
     else if (app.globe) handleGlobeInput(app);
     else handleWorldInput(app);
@@ -1510,7 +1669,8 @@ void appFrame(App& app) {
     BeginDrawing();
     if (app.fp.active) {
         fpRender(app.fp, sim, app.renderer, static_cast<float>(GetTime()));
-        drawFpHud(app);
+        if (app.craft.open && app.fp.control) drawCraftPanel(app);
+        else { app.craft.open = false; drawFpHud(app); }
         EndDrawing();
         return;
     }

@@ -13,6 +13,8 @@
 #include "Knowledge.h"
 #include "../core/Math.h"
 #include <string>
+#include <vector>
+#include "../world/Terrain.h"
 
 namespace wb {
 
@@ -40,6 +42,13 @@ public:
     // Thực hiện một hành động theo hướng nhìn `facing` (vector đơn vị trên mặt phẳng bản đồ).
     // Trả về mô tả kết quả (để hiện lên màn hình). Dùng chung luật của AI: sát thương, ăn, khai thác...
     static std::string playerAction(Simulation& sim, Entity e, PlayerAct act, Vec2 facing);
+    // ---- Xây dựng của người chơi (cùng quy luật vật lý với AI, dùng túi đồ + kho chung của nhóm) ----
+    static std::vector<Building> playerBuildList(Simulation& sim, Entity e);
+    // "" nếu xây được ở ô trước mặt, ngược lại là lý do (thiếu gì, cần công cụ gì...)
+    static std::string playerBuildProblem(Simulation& sim, Entity e, Building b, Vec2 facing);
+    static std::string playerBuild(Simulation& sim, Entity e, Building b, Vec2 facing);
+    // Vật liệu xây dựng đang có (túi + kho nhóm): gỗ, đá (mọi loại đá/gạch), kim loại
+    static void buildStock(Simulation& sim, Entity e, int& wood, int& stone, int& metal);
     // Di chuyển sinh vật bị điều khiển một bước theo hướng `dir` (đã nhân tốc độ), tôn trọng môi trường sống.
     static bool playerMove(Simulation& sim, Entity e, Vec2 dir);
 };

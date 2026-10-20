@@ -97,6 +97,12 @@ int main() {
             if (pick != wb::NullEntity) {
                 wb::fpEnter(app.fp, *app.sim, pick);
                 if (std::atoi(std::getenv("WB_FPV")) == 2) { app.fp.control = true; app.sim->reg.get<wb::Mind>(pick).possessed = true; }
+                if (const char* c = std::getenv("WB_CRAFT")) {   // mở bảng chế tạo (0) / xây dựng (1); thêm đồ vào túi để thử
+                    app.craft.open = true;
+                    app.craft.tab = std::atoi(c);
+                    wb::Inventory& inv = app.sim->reg.get<wb::Inventory>(pick);
+                    inv.wood += 20; inv.stone += 10; inv.add(wb::mat::Flint, 6); inv.add(wb::mat::Fiber, 6); inv.add(wb::mat::Hide, 4);
+                }
             }
         }
         wb::appFrame(app);

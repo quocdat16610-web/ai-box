@@ -291,6 +291,31 @@ bool hasMaterialsFor(const Simulation& sim, const Inventory& inv, Building b) {
     return inv.wood >= bi.wood && stoneLike >= bi.stone && metalCount(sim, inv) >= bi.metal;
 }
 
+// Hoàn tất một công trình (AI hoặc người chơi): đặt lên bản đồ, cập nhật bếp / lò / cầu của nhóm, danh tiếng
+void finishBuilding(Simulation& sim, Entity e, Group* g, Mind& m, int x, int y, Building b) {
+    Tile& t = sim.world.at(x, y);
+    sim.world.setBuilding(x, y, b);
+    t.owner = static_cast<int16_t>(sim.reg.get<Social>(e).group);
+    if (b == Building::Hearth && g) {
+        g->hasHearth = true; g->hearthX = x; g->hearthY = y;
+        experience(sim, e, Concept::Insulation, 0.4f);   // xếp đá quanh lửa → lửa giữ nhiệt, không lan
+    }
+    if (b == Building::Forge && g) {
+        g->forgeX = x; g->forgeY = y;
+        int gd = g->bestDesign[static_cast<int>(Purpose::Heat)];
+        g->forgeHeat = std::max(m.know.bestValue(sim.designs, Purpose::Heat), gd >= 0 ? sim.designs[gd].value(Purpose::Heat) : 0.0f);
+        if (!g->forgeAnnounced) {
+            sim.chronicle.add(sim.tick, EventKind::Discovery,
+                              g->displayName() + std::string(" dựng lò luyện đầu tiên (đạt ") + std::to_string(static_cast<int>(g->forgeHeat)) + "°C)",
+                              x, y);
+            g->forgeAnnounced = true;
+        }
+    }
+    if (b == Building::Bridge) m.blockedWater.reset();
+    sim.reg.get<Social>(e).status = std::min(1.0f, sim.reg.get<Social>(e).status + 0.02f);
+    if (g) g->buildingsTotal++;
+}
+
 WorldState buildState(Simulation& sim, Entity e, Mind& m, const Transform& tr, const Body& body, const Inventory& inv, const Social& so) {
     using namespace ws;
     WorldState s = 0;
@@ -1347,26 +1372,7 @@ Res exec(Ctx& c, ActionId a) {
         std::vector<MatId> metals;
         for (auto& [mt, cnt] : c.inv.mats) if (sim.world.materials[mt].metal) metals.push_back(mt);
         for (MatId mt : metals) needM -= c.inv.take(mt, needM);
-        sim.world.setBuilding(m.tx, m.ty, m.buildType);
-        t.owner = static_cast<int16_t>(c.so.group);
-        if (m.buildType == Building::Hearth) {
-            c.g->hasHearth = true; c.g->hearthX = m.tx; c.g->hearthY = m.ty;
-            experience(sim, c.e, Concept::Insulation, 0.4f);   // xếp đá quanh lửa → lửa giữ nhiệt, không lan
-        }
-        if (m.buildType == Building::Forge) {
-            c.g->forgeX = m.tx; c.g->forgeY = m.ty;
-            int gd = c.g->bestDesign[static_cast<int>(Purpose::Heat)];
-            c.g->forgeHeat = std::max(m.know.bestValue(sim.designs, Purpose::Heat), gd >= 0 ? sim.designs[gd].value(Purpose::Heat) : 0.0f);
-            if (!c.g->forgeAnnounced) {
-                sim.chronicle.add(sim.tick, EventKind::Discovery,
-                                  c.g->displayName() + std::string(" dựng lò luyện đầu tiên (đạt ") + std::to_string(static_cast<int>(c.g->forgeHeat)) + "°C)",
-                                  m.tx, m.ty);
-                c.g->forgeAnnounced = true;
-            }
-        }
-        if (m.buildType == Building::Bridge) m.blockedWater.reset();
-        c.so.status = std::min(1.0f, c.so.status + 0.02f);
-        c.g->buildingsTotal++;
+        finishBuilding(sim, c.e, c.g, m, m.tx, m.ty, m.buildType);
         m.buildType = Building::None;
         return Res::Done;
     }
@@ -1737,7 +1743,6 @@ std::string Brain::playerAction(Simulation& sim, Entity e, PlayerAct act, Vec2 f
     Body& body = sim.reg.get<Body>(e);
     Inventory& inv = sim.reg.get<Inventory>(e);
     Mind& m = sim.reg.get<Mind>(e);
-    Social& so = sim.reg.get<Social>(e);
     const SpeciesDef& sd = sim.species[body.species];
     char buf[160];
     Vec2 front = tr.pos + facing * 1.0f;
@@ -1831,15 +1836,102 @@ std::string Brain::playerAction(Simulation& sim, Entity e, PlayerAct act, Vec2 f
     }
     case PlayerAct::BuildHut: {
         if (!sd.dexterous) return "Loài này không biết dựng nhà";
-        if (inv.wood < 3) return "Cần 3 gỗ để dựng lều";
-        if (!sim.world.walkable(fx, fy) || sim.world.at(fx, fy).building != Building::None) return "Không dựng được ở chỗ này";
-        inv.wood -= 3;
-        sim.world.setBuilding(fx, fy, Building::Hut);
-        if (so.group >= 0) sim.world.at(fx, fy).owner = static_cast<int16_t>(so.group);
-        return "Đã dựng một túp lều";
+        return playerBuild(sim, e, Building::Hut, facing);
     }
     }
     return "";
+}
+
+// ---------------------------------------------------------------------------
+// Xây dựng của người chơi
+// ---------------------------------------------------------------------------
+std::vector<Building> Brain::playerBuildList(Simulation& sim, Entity e) {
+    const SpeciesDef& sd = sim.species[sim.reg.get<Body>(e).species];
+    if (!sd.dexterous) return {Building::Den, Building::ScentMark};
+    return {Building::Hut, Building::House, Building::StoneHouse, Building::Hearth, Building::Forge, Building::Granary,
+            Building::Workshop, Building::Bridge, Building::Wall, Building::Tower, Building::Totem, Building::Temple,
+            Building::TownHall, Building::Castle};
+}
+
+void Brain::buildStock(Simulation& sim, Entity e, int& wood, int& stone, int& metal) {
+    const Inventory& inv = sim.reg.get<Inventory>(e);
+    Group* g = sim.group(sim.reg.get<Social>(e).group);
+    wood = inv.wood + (g ? g->wood : 0);
+    stone = stoneLikeCount(inv) + (g ? stoneLikeCount(*g) : 0);
+    metal = metalCount(sim, inv) + (g ? g->metalStock(sim.world.materials) : 0);
+}
+
+std::string Brain::playerBuildProblem(Simulation& sim, Entity e, Building b, Vec2 facing) {
+    const BuildingInfo& bi = buildingInfo(b);
+    const Mind& m = sim.reg.get<Mind>(e);
+    Group* g = sim.group(sim.reg.get<Social>(e).group);
+    char buf[200];
+    // Quy luật vật lý: công cụ đủ sắc để gia công gỗ / đá (gạch nung thay được việc đẽo đá)
+    float cut = std::max(m.know.bestValue(sim.designs, Purpose::Cut), heldValue(sim, e, Purpose::Cut));   // biết làm hoặc đang cầm
+    bool bricks = bi.stone > 0 && g && g->matCount(mat::Brick) >= bi.stone;
+    if (cut < bi.minCut && !(bi.minCut >= 4.0f && bricks)) {
+        std::snprintf(buf, sizeof(buf), "Cần công cụ cắt ≥ %.1f (đang có %.1f)%s — vào Chế tạo làm rìu tốt hơn", bi.minCut, cut,
+                      bi.minCut >= 4.0f ? " hoặc gạch nung trong kho" : "");
+        return buf;
+    }
+    if (b == Building::Forge) {
+        int gd = g ? g->bestDesign[static_cast<int>(Purpose::Heat)] : -1;
+        float heat = std::max(m.know.bestValue(sim.designs, Purpose::Heat), gd >= 0 ? sim.designs[gd].value(Purpose::Heat) : 0.0f);
+        if (heat < 900.0f) {
+            std::snprintf(buf, sizeof(buf), "Cần thiết kế lò đạt ≥ 900°C (đang có %.0f°C) — vào Chế tạo, mục Nhiệt độ lò: tường đá/đất sét + ống bễ", heat);
+            return buf;
+        }
+    }
+    if (b == Building::Hearth && std::max(m.know.bestValue(sim.designs, Purpose::FireStart), heldValue(sim, e, Purpose::FireStart)) < 260.0f &&
+        !m.know.concepts.test(static_cast<int>(Concept::Combustion)))
+        return "Cần biết tạo lửa: vào Chế tạo, mục Tạo lửa (khoan gỗ ≥ 260°C)";
+    int wood, stone, metal;
+    buildStock(sim, e, wood, stone, metal);
+    if (wood < bi.wood || stone < bi.stone || metal < bi.metal) {
+        std::snprintf(buf, sizeof(buf), "Thiếu vật liệu: cần %d gỗ, %d đá, %d kim loại (có %d / %d / %d, tính cả kho nhóm)", bi.wood, bi.stone, bi.metal, wood, stone, metal);
+        return buf;
+    }
+    const Transform& tr = sim.reg.get<Transform>(e);
+    Vec2 front = tr.pos + facing * 1.0f;
+    int fx = static_cast<int>(std::floor(front.x)), fy = static_cast<int>(std::floor(front.y));
+    if (!sim.world.inBounds(fx, fy)) return "Không xây được ở đây";
+    const Tile& t = sim.world.at(fx, fy);
+    if (t.building != Building::None) return "Ô phía trước đã có công trình";
+    if (b == Building::Bridge) { if (!sim.world.isWater(fx, fy)) return "Cầu phải xây trên mặt nước — quay mặt ra sông / hồ"; }
+    else if (!sim.world.walkable(fx, fy) || sim.world.isWater(fx, fy)) return "Ô phía trước không xây được (nước, vách núi...)";
+    return "";
+}
+
+std::string Brain::playerBuild(Simulation& sim, Entity e, Building b, Vec2 facing) {
+    std::string pr = playerBuildProblem(sim, e, b, facing);
+    if (!pr.empty()) return pr;
+    const BuildingInfo& bi = buildingInfo(b);
+    Inventory& inv = sim.reg.get<Inventory>(e);
+    Group* g = sim.group(sim.reg.get<Social>(e).group);
+    // Tiêu vật liệu: túi đồ trước, rồi kho chung
+    int needW = bi.wood;
+    int fromInv = std::min(needW, inv.wood);
+    inv.wood -= fromInv; needW -= fromInv;
+    if (needW > 0 && g) g->wood -= needW;
+    int needS = bi.stone;
+    for (MatId sm : kBuildStones) needS -= inv.take(sm, needS);
+    if (g) for (MatId sm : kBuildStones) if (needS > 0) needS -= g->takeMat(sm, needS);
+    int needM = bi.metal;
+    std::vector<MatId> metals;
+    for (auto& [mt, c] : inv.mats) if (sim.world.materials[mt].metal) metals.push_back(mt);
+    for (MatId mt : metals) needM -= inv.take(mt, needM);
+    if (g && needM > 0) {
+        metals.clear();
+        for (auto& [mt, c] : g->mats) if (sim.world.materials[mt].metal) metals.push_back(mt);
+        for (MatId mt : metals) if (needM > 0) needM -= g->takeMat(mt, needM);
+    }
+    const Transform& tr = sim.reg.get<Transform>(e);
+    Vec2 front = tr.pos + facing * 1.0f;
+    int fx = static_cast<int>(std::floor(front.x)), fy = static_cast<int>(std::floor(front.y));
+    Mind& m = sim.reg.get<Mind>(e);
+    finishBuilding(sim, e, g, m, fx, fy, b);
+    m.skill[static_cast<int>(Skill::Building)] = std::min(1.0f, m.skillOf(Skill::Building) + 0.03f);
+    return std::string("Đã xây: ") + bi.name;
 }
 
 } // namespace wb

@@ -10,6 +10,8 @@
 #include "../sim/Simulation.h"
 #include "../sim/SaveLoad.h"
 #include "../sim/Scenarios.h"
+#include "../ai/Brain.h"
+#include "../ai/Invention.h"
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -118,6 +120,55 @@ static int runChemTests() {
     return failed ? 1 : 0;
 }
 
+// Kiểm thử chế tạo & xây dựng của người chơi: nhập vai một người nguyên thuỷ, dùng "gợi ý thiết kế" để chế
+// rìu → rìu phải chặt được (cắt > 0), được trang bị, giúp mở khoá nhà gỗ; dựng lều ở ô trống trước mặt.
+int runCraftTest() {
+    SimConfig cfg; cfg.seed = 5; cfg.threads = 1; cfg.width = 192; cfg.height = 96;
+    Simulation sim(cfg);
+    setupScenario(sim, Scenario::PrimalHumans);
+    for (int i = 0; i < 200; ++i) sim.step();
+    Entity me = NullEntity;
+    for (Entity e : sim.agents) if (sim.reg.get<Body>(e).species == sp::Human) { me = e; break; }
+    if (me == NullEntity) { std::printf("FAIL: không có người\n"); return 1; }
+    sim.reg.get<Mind>(me).possessed = true;
+    Inventory& inv = sim.reg.get<Inventory>(me);
+    inv.wood += 30; inv.stone += 10; inv.add(mat::Flint, 6); inv.add(mat::Fiber, 6); inv.add(mat::Hide, 4);
+    int fails = 0;
+    auto check = [&](bool ok, const char* what) { std::printf("%s %s\n", ok ? "ok  " : "FAIL", what); if (!ok) ++fails; };
+    std::vector<Part> axe = suggestDesign(sim, me, Purpose::Cut);
+    CraftCheck ck = checkCraft(sim, me, axe, Purpose::Cut);
+    check(ck.ok(), "gợi ý thiết kế rìu làm được ngay");
+    std::string msg;
+    int id = playerCraft(sim, me, axe, Purpose::Cut, msg);
+    std::printf("     %s\n", msg.c_str());
+    check(id >= 0 && sim.designs[id].value(Purpose::Cut) > 0, "chế tạo rìu thành công");
+    check(inv.item[static_cast<int>(Purpose::Cut)] == id, "rìu được trang bị");
+    std::vector<Part> bad = {{mat::Fiber, Shape::Blade, 1.0f}};
+    check(!checkCraft(sim, me, bad, Purpose::Cut).ok(), "lưỡi rìu bằng sợi bị từ chối (vật lý)");
+    std::vector<Part> fire = suggestDesign(sim, me, Purpose::FireStart);
+    check(playerCraft(sim, me, fire, Purpose::FireStart, msg) >= 0, "chế tạo dụng cụ tạo lửa");
+    std::printf("     %s\n", msg.c_str());
+    bool built = false;
+    const Vec2 dirs[] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}, {0.7f, 0.7f}, {-0.7f, 0.7f}, {0.7f, -0.7f}, {-0.7f, -0.7f}};
+    for (int tries = 0; tries < 40 && !built; ++tries) {
+        for (Vec2 d : dirs) {
+            if (Brain::playerBuildProblem(sim, me, Building::Hut, d).empty()) {
+                std::string r = Brain::playerBuild(sim, me, Building::Hut, d);
+                std::printf("     %s\n", r.c_str());
+                built = true;
+                break;
+            }
+        }
+        if (!built) { Brain::playerMove(sim, me, {0.5f, 0.3f}); sim.step(); }
+    }
+    check(built, "dựng lều ở ô trống trước mặt");
+    std::string pr = Brain::playerBuildProblem(sim, me, Building::Forge, {1, 0});
+    check(!pr.empty(), "lò luyện bị chặn khi chưa có thiết kế lò ≥ 900°C");
+    std::printf("     (%s)\n", pr.c_str());
+    std::printf("%s\n", fails ? "CRAFT TEST FAILED" : "CRAFT TEST PASSED");
+    return fails ? 1 : 0;
+}
+
 // Kiểm thử phòng thí nghiệm gen: ghép Người × Đại bàng + gen tự tạo → loài mới bay được, có nọc độc,
 // thả vào thế giới, sống & sinh sản; rồi kiểm tra loài hậu duệ (tiến hoá) kế thừa gen tự tạo.
 int runGeneLabTest() {
@@ -218,6 +269,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--savetest") return runSaveTest();
     for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--chemtest") return runChemTests();
     for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--genelab-test") return runGeneLabTest();
+    for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--craft-test") return runCraftTest();
     SimConfig cfg;
     std::string scenario = "sandbox";
     int years = 50;
